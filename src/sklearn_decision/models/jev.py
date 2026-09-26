@@ -60,11 +60,18 @@ class JevModel(DecisionModel):
         the per-request token limit.
     transport : httpx.AsyncBaseTransport or None
         Custom transport, e.g. ``httpx.MockTransport`` in tests.
+    max_cost_usd : float or None
+        Spending cap for this model instance (one per fitted estimator).
+        Before each batch, the estimated cost of the uncached requests is
+        added to the spend so far (from reported input tokens); if the total
+        would exceed the cap, nothing is sent and a fatal
+        :class:`DecisionModelError` is raised.
     """
 
     def __init__(self, name: str = "jev-1.13", *, api_key: str | None = None, base_url: str | None = None,
                  timeout: float = 30.0, max_retries: int = 5, max_concurrency: int = 16,
-                 max_questions_per_call: int = 50, transport: httpx.AsyncBaseTransport | None = None):
+                 max_questions_per_call: int = 50, transport: httpx.AsyncBaseTransport | None = None,
+                 max_cost_usd: float | None = None):
         self.name = name
         self.api_key = api_key
         self.base_url = base_url
@@ -73,6 +80,7 @@ class JevModel(DecisionModel):
         self.max_concurrency = max_concurrency
         self.max_questions_per_call = max_questions_per_call
         self.transport = transport
+        self.max_cost_usd = max_cost_usd
 
     # ---------------- DecisionModel API ----------------
 
@@ -90,6 +98,8 @@ class JevModel(DecisionModel):
                 raise ValueError(f"{p} must be an int >= 1")
         if not self.timeout or self.timeout <= 0:
             raise ValueError("timeout must be > 0")
+        if self.max_cost_usd is not None and not self.max_cost_usd >= 0:
+            raise ValueError("max_cost_usd must be >= 0 or None")
         return self
 
     def cache_namespace(self) -> str:
@@ -107,6 +117,13 @@ class JevModel(DecisionModel):
     def answer(self, items: Sequence[tuple[Any, Mapping[str, dict]]]) -> list[Response | BaseException]:
         if not items:
             return []
+        if self.max_cost_usd is not None:
+            spent = self.usage["input_tokens"] / 1e6 * PRICE_PER_INPUT_MTOK
+            batch = sum(_est_tokens(s, q) for s, q in items) / 1e6 * PRICE_PER_INPUT_MTOK
+            if spent + batch > self.max_cost_usd:
+                raise DecisionModelError(
+                    f"Spending cap: this batch (~${batch:.4f}) on top of ${spent:.4f} spent would exceed "
+                    f"max_cost_usd={self.max_cost_usd}. Nothing was sent.", fatal=True)
         raw = run_coro(self._fetch_all(items))
         out: list[Response | BaseException] = []
         for (_, questions), res in zip(items, raw):
@@ -122,7 +139,7 @@ class JevModel(DecisionModel):
     def estimate_cost(self, states, requests, chars_per_token: float = 4.0) -> dict:
         """Rough upper bound with an empty cache."""
         q_tok = [len(canon(r)) / chars_per_token for r in requests]
-        s_tok = [len(s if isinstance(s, str) else canon(s)) / chars_per_token for s in states]
+        s_tok = [_state_chars(s) / chars_per_token for s in states]
         total = sum(st + qt for st in s_tok for qt in q_tok)
         return {
             "rows": len(states),
@@ -187,6 +204,14 @@ class JevModel(DecisionModel):
             wait = retry_after if retry_after is not None else 0.5 * 2**attempt
             await _sleep(wait * (1 + 0.25 * random.random()))
         raise err  # type: ignore[misc]
+
+
+def _state_chars(state) -> int:
+    return len(state if isinstance(state, str) else canon(state))
+
+
+def _est_tokens(state, questions, chars_per_token: float = 4.0) -> float:
+    return (_state_chars(state) + len(canon(questions))) / chars_per_token
 
 
 def _normalize(spec: Mapping, raw: Mapping):

@@ -22,7 +22,7 @@ from sklearn.utils.multiclass import check_classification_targets, type_of_targe
 from sklearn.utils.validation import check_array, check_consistent_length, check_is_fitted, column_or_1d
 
 from .featurizer import QuestionFeaturizer, _input_tags
-from .models import DEFAULT_MODEL, DecisionModel
+from .models import DecisionModel
 from .models.base import model_capabilities
 from .questions import choice, noul, score
 
@@ -91,7 +91,8 @@ class NoulClassifier(ClassifierMixin, _SingleQuestionEstimator):
         A statement that should be true exactly for ``positive_label``.
     positive_label : optional
         Defaults to the larger of the two labels, sklearn's convention.
-    model : str or DecisionModel, default="jev-1.13"
+    model : str or DecisionModel
+        The decision model (required), as for :class:`QuestionFeaturizer`.
     featurizer : QuestionFeaturizer or None
         Template for cache and state settings.
 
@@ -101,7 +102,7 @@ class NoulClassifier(ClassifierMixin, _SingleQuestionEstimator):
     """
 
     def __init__(self, instructions: str = "", positive_label=None, *,
-                 model: str | DecisionModel = DEFAULT_MODEL, featurizer: QuestionFeaturizer | None = None):
+                 model: str | DecisionModel | None = None, featurizer: QuestionFeaturizer | None = None):
         self.instructions = instructions
         self.positive_label = positive_label
         self.model = model
@@ -162,13 +163,14 @@ class ChoiceClassifier(ClassifierMixin, _SingleQuestionEstimator):
         {class label: description or None}. None uses the labels seen in y,
         with no descriptions. Keys are the real class labels (ints are fine);
         they are sent to the model as strings.
-    model : str or DecisionModel, default="jev-1.13"
+    model : str or DecisionModel
+        The decision model (required), as for :class:`QuestionFeaturizer`.
     featurizer : QuestionFeaturizer or None
         Template for cache and state settings.
     """
 
     def __init__(self, instructions: str = "", criteria: Mapping | None = None, *,
-                 model: str | DecisionModel = DEFAULT_MODEL, featurizer: QuestionFeaturizer | None = None):
+                 model: str | DecisionModel | None = None, featurizer: QuestionFeaturizer | None = None):
         self.instructions = instructions
         self.criteria = criteria
         self.model = model
@@ -228,7 +230,8 @@ class ScoreRegressor(RegressorMixin, _SingleQuestionEstimator):
         Rubric levels, ordered low -> high.
     level_values : sequence of float or None
         Numeric value of each level (default 0..L-1).
-    model : str or DecisionModel, default="jev-1.13"
+    model : str or DecisionModel
+        The decision model (required), as for :class:`QuestionFeaturizer`.
     featurizer : QuestionFeaturizer or None
         Template for cache and state settings.
 
@@ -238,7 +241,7 @@ class ScoreRegressor(RegressorMixin, _SingleQuestionEstimator):
 
     def __init__(self, instructions: str = "", levels: Sequence[str] = (),
                  level_values: Sequence[float] | None = None, *,
-                 model: str | DecisionModel = DEFAULT_MODEL, featurizer: QuestionFeaturizer | None = None):
+                 model: str | DecisionModel | None = None, featurizer: QuestionFeaturizer | None = None):
         self.instructions = instructions
         self.levels = levels
         self.level_values = level_values

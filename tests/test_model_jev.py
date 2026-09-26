@@ -180,10 +180,38 @@ def test_malformed_response_is_a_per_row_error():
 def test_capabilities_enforced():
     big = choice("x", [str(i) for i in range(256)])
     with pytest.raises(ValueError, match="limit of 255"):
-        QuestionFeaturizer({"q": big}, cache_path=None).fit(["a"])
+        QuestionFeaturizer({"q": big}, model="jev-1.13").fit(["a"])
+
+
+def test_spending_cap_blocks_before_sending():
+    srv = Server()
+    f = feat(srv, model_kw={"max_cost_usd": 1e-6}).fit(["a"])
+    with pytest.raises(DecisionModelError, match="Spending cap") as e:
+        f.transform(["a long enough state " * 50])
+    assert e.value.fatal and not srv.requests
+    g = feat(srv, model_kw={"max_cost_usd": 1.0}).fit(["a"])
+    g.transform(["a"])
+    assert len(srv.requests) == 1
 
 
 # ---------------- registry ----------------
+
+def test_model_is_required():
+    with pytest.raises(ValueError, match="Choose a decision model"):
+        QuestionFeaturizer(BANK).fit(["a"])
+    with pytest.raises(ValueError, match="Choose a decision model"):
+        ChoiceClassifier("x", {"a": None, "b": None}).fit(["a"])
+
+
+def test_default_cache_is_shared_in_memory_and_writes_nothing(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    srv = Server()
+    f = QuestionFeaturizer(BANK, model=model(srv)).fit(["a"])
+    f.transform(["a"])
+    from sklearn.base import clone
+    clone(f).fit(["a"]).transform(["a"])  # a clone reuses the answers
+    assert len(srv.requests) == 1 and not list(tmp_path.iterdir())
+
 
 def test_registry_resolution():
     assert isinstance(resolve_model("jev-1.13"), JevModel)
@@ -219,6 +247,6 @@ def test_live_smoke(tmp_path):
     X = f.transform(texts)
     assert X.shape == (3, len(f.get_feature_names_out())) and not np.isnan(X).any()
     np.testing.assert_allclose(X[:, f.feature_groups_["product"][:2]].sum(axis=1), 1, atol=1e-3)
-    clf = ChoiceClassifier("Which product is discussed?", {"app": None, "api": None},
+    clf = ChoiceClassifier("Which product is discussed?", {"app": None, "api": None}, model="jev-1.13",
                            featurizer=QuestionFeaturizer(cache_path=str(tmp_path / "live.sqlite"))).fit(texts)
     assert set(clf.predict(texts)) <= {"app", "api"}

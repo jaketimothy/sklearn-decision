@@ -105,8 +105,14 @@ def registered_prefixes() -> list[str]:
     return sorted(_REGISTRY)
 
 
-def resolve_model(model: str | DecisionModel) -> DecisionModel:
+def resolve_model(model: str | DecisionModel | None) -> DecisionModel:
     """A fresh, resolved backend for an estimator's ``model`` parameter."""
+    if model is None:
+        raise ValueError(
+            "Choose a decision model, e.g. model='hf:<repo id>' (local open weights; nothing leaves "
+            "the machine) or model='jev-1.13' (TypeSafe's hosted API: rows are sent to TypeSafe), or pass "
+            f"a DecisionModel instance. Registered prefixes: {registered_prefixes()}"
+        )
     if isinstance(model, DecisionModel):
         return clone(model).resolve()
     if isinstance(model, str):
@@ -120,7 +126,7 @@ def resolve_model(model: str | DecisionModel) -> DecisionModel:
     raise TypeError(f"model must be a string or a DecisionModel, got {type(model).__name__}")
 
 
-def model_capabilities(model: str | DecisionModel) -> Capabilities | None:
+def model_capabilities(model: str | DecisionModel | None) -> Capabilities | None:
     """Capabilities for an unresolved ``model`` parameter, or None if it is invalid.
     Used by ``__sklearn_tags__``, which must not raise."""
     try:

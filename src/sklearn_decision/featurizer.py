@@ -12,7 +12,7 @@ become numeric feature columns, so any sklearn estimator can sit downstream.
         "asks_refund": noul("The customer asks for money back."),
         "product": choice("Which product is discussed?", ["app", "api", "billing"]),
         "urgency": score("How urgent is the request?", ["can wait", "this week", "today"]),
-    }, model="jev-1.13")
+    }, model="hf:google/gemma-4-12b-it")
     clf = make_pipeline(feat, HistGradientBoostingClassifier()).fit(texts, y)
 
 The featurizer is stateless (``fit`` makes no model calls) and row-wise, so it
@@ -34,14 +34,13 @@ from sklearn.utils.validation import check_is_fitted
 from ._answers import DecisionModelError, DistAnswer, NoulAnswer
 from ._cache import AnswerCache, answer_key, canon
 from ._state import prepare_states, states_only
-from .models import DEFAULT_MODEL, DecisionModel, resolve_model
+from .models import DecisionModel, resolve_model
 from .models.base import model_capabilities
 from .questions import validate_question
 
-__all__ = ["QuestionFeaturizer", "SEP", "DEFAULT_CACHE_PATH", "apply_link"]
+__all__ = ["QuestionFeaturizer", "SEP", "apply_link"]
 
 SEP = "__"
-DEFAULT_CACHE_PATH = "decision_cache.sqlite"
 _LINKS = ("identity", "logit", "clr")
 
 
@@ -94,11 +93,12 @@ class QuestionFeaturizer(TransformerMixin, BaseEstimator):
         Question bank: name -> spec from ``noul`` / ``choice`` / ``score``
         (or the equivalent JSON). The bank *is* the encoder; tune it like a
         hyperparameter.
-    model : str or DecisionModel, default="jev-1.13"
-        The decision model. A string resolves through the model registry
-        ("jev-1.13" -> ``JevModel(name="jev-1.13")``); pass an instance such
-        as ``JevModel("jev-1.13", timeout=60)`` to configure it. Its
-        parameters are nested (``model__timeout``).
+    model : str or DecisionModel
+        The decision model; required. A string resolves through the model
+        registry: "hf:<repo id>[@revision]" -> a local open-weights
+        ``TransformersModel``, "jev-1.13" -> ``JevModel`` (hosted: rows are
+        sent to TypeSafe). Pass an instance to configure it; its parameters
+        are nested (``model__timeout``).
     link : {"identity", "logit", "clr"}
         "logit" maps every probability column to log-odds, which suits linear
         models. "clr" (centred log-ratio) treats each choice/score question as
@@ -120,7 +120,9 @@ class QuestionFeaturizer(TransformerMixin, BaseEstimator):
         Applied to each row before sending, e.g. to trim or template text.
         Use a module-level function so the estimator stays picklable.
     cache_path : str or None
-        SQLite file for the persistent answer cache. None = in-memory only.
+        SQLite file for a persistent answer cache. None (default) keeps
+        answers in a process-wide in-memory cache, shared by clones and
+        grid-search candidates; nothing is written to disk.
     on_error : {"raise", "nan"}
         On a failed row, raise (after caching the successes) or emit NaNs.
         HistGradientBoosting handles NaN natively. Fatal errors such as bad
@@ -146,14 +148,14 @@ class QuestionFeaturizer(TransformerMixin, BaseEstimator):
         self,
         questions: Mapping[str, Mapping] | None = None,
         *,
-        model: str | DecisionModel = DEFAULT_MODEL,
+        model: str | DecisionModel | None = None,
         link: str = "identity",
         score_repr: str = "ev",
         drop_redundant: bool = False,
         include_confidence: bool = False,
         state_columns: Sequence[str] | None = None,
         state_fn: Callable[[Any], Any] | None = None,
-        cache_path: str | None = DEFAULT_CACHE_PATH,
+        cache_path: str | None = None,
         on_error: str = "raise",
         logit_eps: float = 1e-4,
         verbose: bool = False,

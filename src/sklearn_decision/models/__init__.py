@@ -4,8 +4,6 @@ from .base import Capabilities, DecisionModel, register_model, registered_prefix
 from .fake import FakeModel
 from .jev import JevAPIError, JevModel
 
-DEFAULT_MODEL = "jev-1.13"
-
 register_model("jev-", lambda name: JevModel(name=name))
 register_model("fake-", lambda name: FakeModel(version=name))
 
@@ -15,7 +13,6 @@ __all__ = [
     "FakeModel",
     "JevModel",
     "JevAPIError",
-    "DEFAULT_MODEL",
     "register_model",
     "registered_prefixes",
     "resolve_model",

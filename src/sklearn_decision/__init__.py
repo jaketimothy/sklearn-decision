@@ -6,16 +6,18 @@ Encoders:
     QuestionFeaturizer (a bank of noul/choice/score questions -> features)
     ChoiceEncoder      (a codebook of options -> simplex embeddings)
 
-Every estimator takes ``model=`` : a registered name such as "jev-1.13", or a
-DecisionModel instance such as ``JevModel("jev-1.13", timeout=60)``.
+Every estimator needs ``model=``: a registered name such as
+"hf:google/gemma-4-12b-it" (local open weights) or "jev-1.13" (TypeSafe's
+hosted API), or a DecisionModel instance such as ``JevModel("jev-1.13",
+timeout=60)``. Nothing is sent anywhere until you choose.
 """
 from ._answers import DecisionModelError, DistAnswer, NoulAnswer, Response
+from ._cache import clear_memory_cache
 from .choice import ChoiceEncoder, choice_bank, exemplar_options, stitch_blocks
 from .estimators import ChoiceClassifier, NoulClassifier, ScoreRegressor
 from .featurizer import QuestionFeaturizer
 from .inspection import grouped_permutation_importance
 from .models import (
-    DEFAULT_MODEL,
     Capabilities,
     DecisionModel,
     FakeModel,
@@ -47,9 +49,9 @@ __all__ = [
     "Capabilities",
     "JevModel",
     "FakeModel",
-    "DEFAULT_MODEL",
     "register_model",
     "resolve_model",
+    "clear_memory_cache",
     "DecisionModelError",
     "JevAPIError",
     "NoulAnswer",

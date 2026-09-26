@@ -19,7 +19,7 @@ from sklearn.utils.validation import check_is_fitted
 from ._cache import canon
 from ._state import prepare_states
 from .featurizer import SEP, QuestionFeaturizer, _input_tags, apply_link
-from .models import DEFAULT_MODEL, DecisionModel, resolve_model
+from .models import DecisionModel, resolve_model
 
 __all__ = ["ChoiceEncoder", "choice_bank", "exemplar_options", "stitch_blocks"]
 
@@ -183,7 +183,8 @@ class ChoiceEncoder(TransformerMixin, BaseEstimator):
         from the blocks through the anchor (requires ``anchor``; assumes IIA).
     random_state : int, RandomState or None
         Exemplar sampling.
-    model : str or DecisionModel, default="jev-1.13"
+    model : str or DecisionModel
+        The decision model (required), as for :class:`QuestionFeaturizer`.
     featurizer : QuestionFeaturizer or None
         Template for cache, state and error settings (``cache_path``,
         ``state_columns``, ``state_fn``, ``on_error``, ``logit_eps``).
@@ -210,7 +211,7 @@ class ChoiceEncoder(TransformerMixin, BaseEstimator):
                  n_exemplars: int | None = None, anchor: tuple[str, str | None] | None = None,
                  max_options: int | None = None, max_exemplar_chars: int = 400,
                  self_match: str = "renormalize", link: str = "clr", stitch: bool = False,
-                 random_state=None, model: str | DecisionModel = DEFAULT_MODEL,
+                 random_state=None, model: str | DecisionModel | None = None,
                  featurizer: QuestionFeaturizer | None = None):
         self.codebook = codebook
         self.views = views

@@ -9,7 +9,17 @@ import time
 
 from ._answers import Answer, answer_from_json, answer_to_json
 
-__all__ = ["AnswerCache", "answer_key", "canon"]
+__all__ = ["AnswerCache", "answer_key", "canon", "clear_memory_cache"]
+
+# Process-wide store behind every cache_path=None cache. Keys include the
+# model namespace, so estimators can share it safely; clones, refits and
+# grid-search candidates reuse answers without writing anything to disk.
+_MEMORY: dict[str, tuple[Answer, str]] = {}
+
+
+def clear_memory_cache() -> None:
+    """Drop every answer held by in-memory (cache_path=None) caches."""
+    _MEMORY.clear()
 
 
 def canon(obj) -> str:
@@ -22,7 +32,8 @@ def answer_key(namespace: str, qspec_key: str, state_key: str) -> str:
 
 
 class AnswerCache:
-    """SQLite-backed when ``path`` is set, otherwise in-memory.
+    """SQLite-backed when ``path`` is set, otherwise the process-wide
+    in-memory store (see :func:`clear_memory_cache`).
 
     The connection opens lazily and is dropped on pickling, so estimators that
     hold a cache stay picklable and cloneable.
@@ -30,7 +41,6 @@ class AnswerCache:
 
     def __init__(self, path: str | None):
         self.path = path
-        self._mem: dict[str, tuple[Answer, str]] = {}
         self._conn: sqlite3.Connection | None = None
         self._lock = threading.Lock()
 
@@ -48,7 +58,7 @@ class AnswerCache:
 
     def get_many(self, keys: list[str]) -> dict[str, tuple[Answer, str]]:
         if not self.path:
-            return {k: self._mem[k] for k in keys if k in self._mem}
+            return {k: _MEMORY[k] for k in keys if k in _MEMORY}
         out: dict[str, tuple[Answer, str]] = {}
         with self._lock:
             conn = self._connect()
@@ -67,7 +77,7 @@ class AnswerCache:
             return
         if not self.path:
             for k, a, v in rows:
-                self._mem[k] = (a, v)
+                _MEMORY[k] = (a, v)
             return
         now = time.time()
         with self._lock:

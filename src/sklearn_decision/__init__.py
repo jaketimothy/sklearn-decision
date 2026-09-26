@@ -23,6 +23,7 @@ from .models import (
     FakeModel,
     JevAPIError,
     JevModel,
+    TransformersModel,
     register_model,
     resolve_model,
 )
@@ -48,6 +49,7 @@ __all__ = [
     "DecisionModel",
     "Capabilities",
     "JevModel",
+    "TransformersModel",
     "FakeModel",
     "register_model",
     "resolve_model",

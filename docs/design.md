@@ -2,7 +2,7 @@
 
 **Thesis.** Use TypeSafe's Jev as an encoder. Unstructured rows go in, and the answers to a bank of typed questions come out as a numeric matrix of calibrated probabilities. That turns an unstructured-data problem into an ordinary scikit-learn problem. The question bank plays the role of the encoder's weights, and every weight is a sentence you can read.
 
-**Status.** `sklearn_decision` implements everything below. The estimators are model-agnostic: the decision model is a `model` parameter backed by a small `DecisionModel` protocol, and v1 ships one real backend, `JevModel`, plus an offline `FakeModel` for tests. `JevModel` has been tested against a mock of the documented `/v1/systemone` wire format, not yet against the live API. Target model: jev-1.13, the only published version as of Sept 2026.
+**Status.** `sklearn_decision` implements everything below. The estimators are model-agnostic: the decision model is a `model` parameter backed by a small `DecisionModel` protocol, and It ships two real backends: `TransformersModel`, local open weights read out through their answer-token logits (`model="hf:<repo id>"`), and `JevModel`, TypeSafe's hosted API (`model="jev-1.13"`). An offline `FakeModel` is for tests. There is no default model: nothing is sent anywhere until the user chooses. `JevModel` has been tested against a mock of the documented `/v1/systemone` wire format, not yet against the live API. Target model: jev-1.13, the only published version as of Sept 2026.
 
 This document started as the design notes for the single-file prototype `jev_featurizer.py`; names have been updated to the package (`JevFeaturizer` → `QuestionFeaturizer`, `Jev*Classifier` → `*Classifier`, API settings → `JevModel`).
 
@@ -160,7 +160,7 @@ Report accuracy, macro-F1, log-loss and ECE, plus cost per 1k rows and latency.
 - **sklearn wrappers for LLMs.** `scikit-llm` (`ZeroShotGPTClassifier`) and `stormtrooper` wrap chat models and NLI models as sklearn classifiers. The pass-through estimators here are the Jev counterpart, with real probabilities, a confidence score, caching and version pinning.
 - **Jev in sklearn workflows.** glemaitre/jev-classification-topic is a benchmark harness, zero-shot only, not a reusable estimator. No Jev featurizer, question-bank encoder or codebook encoder was found as of 2026-09-25.
 - **Question answers as features.** Research on interpretable embeddings built from LLM yes/no answers (QA-Emb), prompt-based decision trees (Tree-Prompt) and concept-bottleneck models is the direct lineage. Its practical blocker was the cost of one LLM call per question. Jev's pricing ($0.042 per million input tokens, free output) removes it.
-- **Open Jev-like models** (openjev, open-jev-deberta-v3-large) could serve as a local, version-stable backend. That would be a later addition, not part of v1.
+- **Open Jev-like models.** `TransformersModel` implements the "frozen model + logit readout" recipe from the open-weights research (e.g. Gemma 4 12B/31B, Cygnet-style), which suits the featurizer: answers are deterministic and graded rather than decision-sharpened, and provenance is clean. decider-4b v2 speaks TypeSafe's wire format, so it needs only a small generalization of `JevModel` (a configurable model name and base URL); that is the natural next backend.
 
 ---
 

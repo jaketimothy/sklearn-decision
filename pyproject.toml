@@ -17,6 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+local = ["torch>=2.2", "transformers>=4.45"]
 dev = ["pytest>=7", "pandas>=2", "ruff>=0.5"]
 
 [tool.hatch.build.targets.wheel]
@@ -24,8 +25,11 @@ packages = ["src/sklearn_decision"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["live: calls the real Jev API (needs TYPESAFE_API_KEY)"]
-addopts = "-m 'not live'"
+markers = [
+    "live: calls the real Jev API (needs TYPESAFE_API_KEY)",
+    "hub: downloads a real model from the Hugging Face Hub",
+]
+addopts = "-m 'not live and not hub'"
 
 [tool.ruff]
 line-length = 120

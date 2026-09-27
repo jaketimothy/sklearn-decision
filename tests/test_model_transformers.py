@@ -154,7 +154,7 @@ def test_fitted_estimator_pickles_without_weights(load_calls):
 
 @pytest.mark.hub
 def test_real_instruct_model_answers_obvious_questions():
-    m = TransformersModel("HuggingFaceTB/SmolLM2-360M-Instruct", device="cpu", dtype="float32")
+    m = TransformersModel("Qwen/Qwen2.5-0.5B-Instruct", device="cpu", dtype="float32")
     X = ["The rocket launched from Cape Canaveral and reached orbit.",
          "The recipe needs two cups of flour and an egg."]
     f = QuestionFeaturizer({"space": noul("The text is about space travel."),

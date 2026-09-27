@@ -1,0 +1,172 @@
+"""Phase 1: model-behaviour checks (docs/design.md), for any decision model.
+
+Run these before trusting a model as an encoder:
+
+  saturation   are noul answers graded, or stuck at 0 / 1?
+  noise        do identical requests return identical answers?
+  order        do choice probabilities move when options are reordered?
+  iia          does dropping an option preserve the others' ratios?
+               (gates ChoiceEncoder(stitch=True) and self_match="renormalize")
+  rewording    do reworded questions rank rows the same way?
+  injection    do instructions hidden in the text move the answers?
+  coupling     do answers depend on the other questions in the request?
+               (only for models that batch questions per request, e.g. Jev)
+
+    python benchmarks/behaviour_checks.py --model hf:Qwen/Qwen2.5-0.5B-Instruct
+"""
+from __future__ import annotations
+
+import argparse
+import itertools
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+from scipy.stats import spearmanr
+from sklearn.base import clone
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from data import BANK_20NG, INJECTIONS, REWORDINGS, load_20ng  # noqa: E402
+from learning_curves import make_model, slug  # noqa: E402
+
+from sklearn_decision import JevModel, QuestionFeaturizer, choice, clear_memory_cache  # noqa: E402
+
+HERE = Path(__file__).resolve().parent
+NOULS = [q for q, s in BANK_20NG.items() if s["type"] == "noul"]
+TOPIC = BANK_20NG["topic"]
+
+
+def answers(model, bank, X, cache):
+    f = QuestionFeaturizer(bank, model=model, cache_path=cache).fit(X)
+    return f.transform(X), f
+
+
+def check_saturation(model, X, cache):
+    P, _ = answers(model, {q: BANK_20NG[q] for q in NOULS}, X, cache)
+    graded = (P > 0.02) & (P < 0.98)
+    return {
+        "share_graded": float(graded.mean()),
+        "share_graded_by_question": dict(zip(NOULS, np.round(graded.mean(axis=0), 3).tolist())),
+        "mean_abs_logodds": float(np.abs(np.log(np.clip(P, 1e-6, 1 - 1e-6) / np.clip(1 - P, 1e-6, 1))).mean()),
+        "histogram": np.histogram(P, bins=10, range=(0, 1))[0].tolist(),
+        "pass": bool(graded.mean() > 0.5),
+    }
+
+
+def check_noise(model, X):
+    runs = []
+    for _ in range(2):
+        clear_memory_cache()
+        runs.append(answers(model, {q: BANK_20NG[q] for q in NOULS[:3]}, X, None)[0])
+    clear_memory_cache()
+    diff = np.abs(runs[0] - runs[1])
+    return {"max_abs_diff": float(diff.max()), "mean_abs_diff": float(diff.mean()), "pass": bool(diff.max() < 0.01)}
+
+
+def check_order(model, X, cache):
+    labels = list(TOPIC["criteria"])
+    per_order = []
+    for shift in range(len(labels)):
+        order = labels[shift:] + labels[:shift]
+        q = choice(TOPIC["instructions"], {lb: TOPIC["criteria"][lb] for lb in order})
+        P, f = answers(model, {"t": q}, X, cache)
+        cols = [list(f.get_feature_names_out()).index(f"t__{lb}") for lb in labels]
+        per_order.append((P[:, cols], order[0]))
+    stack = np.stack([p for p, _ in per_order])  # (orders, rows, labels)
+    argmax_agree = float((stack.argmax(axis=2) == stack[0].argmax(axis=1)).all(axis=0).mean())
+    first_bias = float(np.mean([p[:, labels.index(first)].mean() - p.mean() for p, first in per_order]))
+    spread = float(stack.std(axis=0).mean())
+    return {"mean_prob_std_across_orders": spread, "argmax_agreement": argmax_agree,
+            "first_position_excess_prob": first_bias, "pass": bool(argmax_agree > 0.9 and spread < 0.05)}
+
+
+def check_iia(model, X, cache):
+    labels = list(TOPIC["criteria"])
+    full, f = answers(model, {"t": TOPIC}, X, cache)
+    names = list(f.get_feature_names_out())
+    lf = {lb: np.log(np.clip(full[:, names.index(f"t__{lb}")], 1e-6, 1)) for lb in labels}
+    diffs = []
+    for drop in labels:
+        keep = [lb for lb in labels if lb != drop]
+        P, g = answers(model, {"t": choice(TOPIC["instructions"], {lb: TOPIC["criteria"][lb] for lb in keep})},
+                       X, cache)
+        gn = list(g.get_feature_names_out())
+        ls = {lb: np.log(np.clip(P[:, gn.index(f"t__{lb}")], 1e-6, 1)) for lb in keep}
+        for a, b in itertools.combinations(keep, 2):
+            diffs.append(np.abs((lf[a] - lf[b]) - (ls[a] - ls[b])))
+    d = np.concatenate(diffs)
+    return {"median_abs_logratio_change": float(np.median(d)), "p90_abs_logratio_change": float(np.quantile(d, 0.9)),
+            "pass": bool(np.median(d) < 0.25)}
+
+
+def check_rewording(model, X, cache):
+    A, _ = answers(model, {q: BANK_20NG[q] for q in REWORDINGS}, X, cache)
+    B, _ = answers(model, REWORDINGS, X, cache)
+    rho = {q: float(spearmanr(A[:, j], B[:, j]).statistic) for j, q in enumerate(REWORDINGS)}
+    return {"spearman_by_question": rho, "median_spearman": float(np.median(list(rho.values()))),
+            "pass": bool(np.median(list(rho.values())) > 0.7)}
+
+
+def check_injection(model, X, cache):
+    bank = {q: BANK_20NG[q] for q in NOULS} | {"topic": TOPIC}
+    clean, f = answers(model, bank, X, cache)
+    noul_cols = [f.feature_groups_[q][0] for q in NOULS]
+    topic_cols = f.feature_groups_["topic"]
+
+    def shift(suffix):
+        P, _ = answers(model, bank, [x + "\n\n" + suffix for x in X], cache)
+        flips = ((P[:, noul_cols] > 0.5) != (clean[:, noul_cols] > 0.5)).mean()
+        topic_changed = (P[:, topic_cols].argmax(1) != clean[:, topic_cols].argmax(1)).mean()
+        return {"mean_abs_noul_change": float(np.abs(P[:, noul_cols] - clean[:, noul_cols]).mean()),
+                "noul_flip_rate": float(flips), "topic_change_rate": float(topic_changed)}
+
+    control = shift("Thanks for reading, and have a good day.")
+    attacks = {s: shift(s) for s in INJECTIONS}
+    worst = max(a["noul_flip_rate"] for a in attacks.values())
+    return {"control": control, "attacks": attacks, "worst_flip_rate": worst,
+            "pass": bool(worst <= control["noul_flip_rate"] + 0.05)}
+
+
+def check_coupling(model, X, cache):
+    if not isinstance(model, JevModel):
+        return {"skipped": "questions are answered in isolated prompts by this model"}
+    bank = {q: BANK_20NG[q] for q in NOULS}
+    together, _ = answers(model, bank, X, None)
+    alone, _ = answers(clone(model).set_params(max_questions_per_call=1), bank, X, None)
+    d = np.abs(together - alone)
+    return {"max_abs_diff": float(d.max()), "mean_abs_diff": float(d.mean())}
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--model", default="hf:Qwen/Qwen2.5-0.5B-Instruct")
+    ap.add_argument("--device", default=None)
+    ap.add_argument("--dtype", default="float32")
+    ap.add_argument("--batch-size", type=int, default=8)
+    ap.add_argument("--max-state-tokens", type=int, default=256)
+    ap.add_argument("--n", type=int, default=100, help="rows per check (injection and noise use a quarter)")
+    ap.add_argument("--n-train", type=int, default=400, help="training pool drawn as in learning_curves.py")
+    ap.add_argument("--checks", default="saturation,noise,order,iia,rewording,injection,coupling")
+    args = ap.parse_args(argv)
+
+    model = make_model(args)
+    cache = str(HERE / "cache" / f"{slug(args.model)}.sqlite")
+    X, *_ = load_20ng(args.n_train, 4)  # training rows only; the test split stays untouched
+    X = X[: args.n]
+    path = HERE / "results" / slug(args.model) / "behaviour_checks.json"
+    out = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}  # rerun checks replace theirs
+    out.update({"model": args.model, "n_rows": len(X)})
+    for name in args.checks.split(","):
+        fn = globals()[f"check_{name}"]
+        rows = X[: max(8, args.n // 4)] if name in ("injection", "noise") else X
+        out[name] = fn(model, rows) if name == "noise" else fn(model, rows, cache)
+        summary = {k: v for k, v in out[name].items() if not isinstance(v, (dict, list))}
+        print(f"{name:10s} {summary}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(out, indent=2), encoding="utf-8")
+    print("wrote", path)
+
+
+if __name__ == "__main__":
+    main()

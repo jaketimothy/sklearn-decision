@@ -6,10 +6,11 @@ import json
 import sqlite3
 import threading
 import time
+from collections.abc import Mapping
 
 from ._answers import Answer, answer_from_json, answer_to_json
 
-__all__ = ["AnswerCache", "answer_key", "canon", "clear_memory_cache"]
+__all__ = ["AnswerCache", "answer_key", "canon", "question_key", "clear_memory_cache"]
 
 # Process-wide store behind every cache_path=None cache. Keys include the
 # model namespace, so estimators can share it safely; clones, refits and
@@ -25,6 +26,20 @@ def clear_memory_cache() -> None:
 def canon(obj) -> str:
     """Canonical JSON: the identity of a state or question spec."""
     return json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+def question_key(spec: Mapping) -> str:
+    """The identity of a question spec, for cache keys.
+
+    Choice options keep their order: answers are stored by position, and
+    the order is part of what the model sees, so the same options listed in
+    a different order are a different question. (``canon`` alone would sort
+    them away and hand one ordering's answers to the other.)
+    """
+    d = dict(spec)
+    if isinstance(d.get("criteria"), Mapping):
+        d["criteria"] = [[k, v] for k, v in d["criteria"].items()]
+    return canon(d)
 
 
 def answer_key(namespace: str, qspec_key: str, state_key: str) -> str:

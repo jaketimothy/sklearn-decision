@@ -236,3 +236,15 @@ def test_estimate_cost_delegates_to_model(texts):
 def test_model_limits_checked_at_fit(texts):
     with pytest.raises(ValueError, match="limit of 2"):
         feat(model=FakeModel(max_choice_options=2)).fit(texts)
+
+
+def test_reordered_choice_options_are_a_different_question(texts):
+    """Regression: answers are positional, so option order must be part of the cache key."""
+    a = QuestionFeaturizer({"q": choice("Which?", ["x", "y", "z"])}, model=FakeModel(temperature=0.3)).fit(texts)
+    b = QuestionFeaturizer({"q": choice("Which?", ["z", "x", "y"])}, model=FakeModel(temperature=0.3)).fit(texts)
+    Pa = a.transform(texts)
+    Pb = b.transform(texts)  # would hit a's cached answers, misaligned, if order were ignored
+    assert b.model_.usage["calls"] == len(texts)
+    # FakeModel's option scores don't depend on position, so realigned columns must match
+    cols = [list(b.get_feature_names_out()).index(f"q__{o}") for o in "xyz"]
+    np.testing.assert_allclose(Pb[:, cols], Pa, rtol=1e-12)

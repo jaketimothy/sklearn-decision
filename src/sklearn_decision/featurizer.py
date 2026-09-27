@@ -32,7 +32,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
 
 from ._answers import DecisionModelError, DistAnswer, NoulAnswer
-from ._cache import AnswerCache, answer_key, canon
+from ._cache import AnswerCache, answer_key, canon, question_key
 from ._state import prepare_states, states_only
 from .models import DecisionModel, resolve_model
 from .models.base import model_capabilities
@@ -270,7 +270,7 @@ class QuestionFeaturizer(TransformerMixin, BaseEstimator):
 
         # 1) cache lookup, one key per (row, question)
         state_keys = [canon(s) for s in states]
-        qspec_keys = {q: canon(self.questions[q]) for q in qnames}
+        qspec_keys = {q: question_key(self.questions[q]) for q in qnames}
         keys = [[answer_key(ns, qspec_keys[q], sk) for q in qnames] for sk in state_keys]
         flat = [k for row in keys for k in row]
         hits = self.cache_.get_many(list(dict.fromkeys(flat)))

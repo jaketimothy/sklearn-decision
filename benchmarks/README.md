@@ -3,7 +3,7 @@
 **Latest results:** [RESULTS.md](RESULTS.md) (Qwen2.5-0.5B-Instruct on CPU).
 
 Harness for the experiment plan in [docs/design.md](../docs/design.md) §4. Every script takes `--model`:
-a registered name (`hf:<repo id>[@revision]` for a local open-weights model, `jev-1.13` for TypeSafe's
+a registered name (`hf:<repo id>[@revision]` for a local open-weights model, `jev-latest` for TypeSafe's
 hosted API) or anything `resolve_model` accepts.
 
 | Script | Plan phase | What it does |
@@ -39,6 +39,8 @@ python benchmarks/report.py results/Qwen_Qwen2.5-0.5B-Instruct
 | E | the 14-question bank in `data.py`, log-odds, standardized | logistic regression |
 | F | A + E | logistic regression |
 | G | B + E | logistic regression |
+| H | only the topic choice question (zero-shot, recalibrated) | logistic regression |
+| I | only the 13 yes/no questions (E without the topic question) | logistic regression |
 
 Arm D (`ChoiceEncoder` exemplar codebook) is supported by the package but not in these runs: a
 25-exemplar prompt is ~2.5k tokens per row, too slow on the CPU used here.

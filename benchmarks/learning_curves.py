@@ -5,7 +5,7 @@ set grows. Question answers are computed once (the featurizer is stateless)
 and cached in SQLite, so re-runs and new arms cost nothing.
 
     python benchmarks/learning_curves.py --model hf:Qwen/Qwen2.5-0.5B-Instruct
-    python benchmarks/learning_curves.py --model jev-1.13          # needs TYPESAFE_API_KEY
+    python benchmarks/learning_curves.py --model jev-latest          # needs TYPESAFE_API_KEY
 """
 from __future__ import annotations
 
@@ -74,6 +74,23 @@ def make_model(args):
     return resolve_model(args.model)
 
 
+class TruncateLike:
+    """state_fn giving another model's view of each row: the first n tokens under
+    that model's tokenizer, exactly as TransformersModel(max_state_tokens=n) cuts it."""
+
+    def __init__(self, spec: str):
+        repo, _, n = spec.removeprefix("hf:").rpartition(":")
+        self.reader = TransformersModel(repo, max_state_tokens=int(n))
+        self._tok = None
+
+    def __call__(self, text):
+        if self._tok is None:
+            from transformers import AutoTokenizer
+
+            self._tok = AutoTokenizer.from_pretrained(self.reader.name)
+        return self.reader._state_text(self._tok, text)
+
+
 def embed(texts, name):
     from sentence_transformers import SentenceTransformer
 
@@ -105,9 +122,13 @@ def main(argv=None):
     ap.add_argument("--embeddings", default="sentence-transformers/all-MiniLM-L6-v2",
                     help="sentence-transformers model for arm B, or 'none'")
     ap.add_argument("--cache", default=None, help="answer cache (default benchmarks/cache/<model>.sqlite)")
+    ap.add_argument("--tag", default="", help="suffix for the results directory, e.g. 'truncated'")
+    ap.add_argument("--truncate-like", default=None, metavar="HF_REPO:N_TOKENS",
+                    help="send the question model only the first N tokens of each row, as that repo's "
+                         "tokenizer cuts them (e.g. hf:Qwen/Qwen2.5-0.5B-Instruct:160); baselines see full rows")
     args = ap.parse_args(argv)
 
-    out_dir = HERE / "results" / slug(args.model)
+    out_dir = HERE / "results" / (slug(args.model) + (f"-{args.tag}" if args.tag else ""))
     out_dir.mkdir(parents=True, exist_ok=True)
     cache = args.cache or str(HERE / "cache" / f"{slug(args.model)}.sqlite")
     Path(cache).parent.mkdir(parents=True, exist_ok=True)
@@ -119,7 +140,8 @@ def main(argv=None):
 
     # ---- question features, computed once for every row ----
     t0 = time.time()
-    feat = QuestionFeaturizer(BANK_20NG, model=model, cache_path=cache).fit(X_tr)
+    state_fn = TruncateLike(args.truncate_like) if args.truncate_like else None
+    feat = QuestionFeaturizer(BANK_20NG, model=model, cache_path=cache, state_fn=state_fn).fit(X_tr)
     print("cost estimate:", feat.estimate_cost(X_tr + X_te))
     rows = X_tr + X_te
     chunks = []
@@ -130,13 +152,13 @@ def main(argv=None):
     Q_tr, Q_te = Q_all[: len(X_tr)], Q_all[len(X_tr):]
     feat_seconds = time.time() - t0
     print(f"question features: {Q_all.shape} in {feat_seconds:.0f}s; usage {feat.model_.usage}")
-    eps = 1e-4
+    eps = feat.logit_eps_  # half the model's rounding step, else 1e-4
     L_tr, L_te = (np.log(np.clip(Q, eps, 1 - eps)) - np.log1p(-np.clip(Q, eps, 1 - eps)) for Q in (Q_tr, Q_te))
 
     # ---- arm C: zero-shot, shares the bank's topic answers through the cache ----
     topic = BANK_20NG["topic"]
     zs = ChoiceClassifier(topic["instructions"], topic["criteria"], model=model,
-                          featurizer=QuestionFeaturizer(cache_path=cache)).fit(X_te)
+                          featurizer=QuestionFeaturizer(cache_path=cache, state_fn=state_fn)).fit(X_te)
     P_topic = zs.predict_proba(X_te)
     order = [names.index(TOPIC_TO_CLASS[c]) for c in zs.classes_]
     P_zs = np.zeros_like(P_topic)
@@ -160,7 +182,8 @@ def main(argv=None):
         return P
 
     sizes = [len(X_tr) if s == "all" else int(s) for s in args.sizes.split(",")]
-    results = {"model": args.model, "model_versions": sorted(feat.model_.versions_seen), "classes": names,
+    results = {"model": args.model, "tag": args.tag, "truncate_like": args.truncate_like,
+               "model_versions": sorted(feat.model_.versions_seen), "classes": names,
                "n_train_pool": len(X_tr), "n_test": len(X_te), "n_questions": len(BANK_20NG),
                "feature_seconds": feat_seconds, "usage": feat.model_.usage, "zero_shot": zero_shot, "curves": {}}
     for n in sizes:
@@ -172,8 +195,14 @@ def main(argv=None):
             T_tr, T_te = tfidf.transform([X_tr[i] for i in idx]), tfidf.transform(X_te)
             sc = StandardScaler().fit(L_tr[idx])
             Qs_tr, Qs_te = sc.transform(L_tr[idx]), sc.transform(L_te)
+            topic_cols = feat.feature_groups_["topic"]
             arms = {
                 "A: TF-IDF + LR": (T_tr, T_te),
+                # zero-shot recalibrated: the topic question's answers alone, with a learned head
+                "H: topic question + LR": (Qs_tr[:, topic_cols], Qs_te[:, topic_cols]),
+                # the bank as an encoder, without the question that names the classes
+                "I: yes/no questions + LR": (np.delete(Qs_tr, topic_cols, axis=1),
+                                             np.delete(Qs_te, topic_cols, axis=1)),
                 "E: questions + LR": (Qs_tr, Qs_te),
                 "F: TF-IDF + questions": (sparse.hstack([T_tr, Qs_tr]).tocsr(), sparse.hstack([T_te, Qs_te]).tocsr()),
             }
@@ -186,7 +215,12 @@ def main(argv=None):
         row = {arm: np.mean([m["accuracy"] for m in c[str(len(idx))]]) for arm, c in results["curves"].items()}
         print(f"n={len(idx):4d}  " + "  ".join(f"{a.split(':')[0]}={v:.3f}" for a, v in row.items()))
 
-    (out_dir / "learning_curves.json").write_text(json.dumps(results, indent=2, default=float), encoding="utf-8")
+    previous = out_dir / "learning_curves.json"
+    if feat.model_.usage["calls"] == 0 and previous.exists():
+        # a re-fit from the cache: keep the cost of the run that actually fetched the answers
+        old = json.loads(previous.read_text(encoding="utf-8"))
+        results.update({k: old[k] for k in ("feature_seconds", "usage", "model_versions") if k in old})
+    previous.write_text(json.dumps(results, indent=2, default=float), encoding="utf-8")
     print("wrote", out_dir / "learning_curves.json")
 
 

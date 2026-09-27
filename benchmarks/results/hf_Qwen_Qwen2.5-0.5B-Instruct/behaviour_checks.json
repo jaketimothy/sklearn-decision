@@ -47,6 +47,10 @@
   "iia": {
     "median_abs_logratio_change": 1.2128143775743148,
     "p90_abs_logratio_change": 3.600064569997855,
+    "measurable_pairs": 576,
+    "total_pairs": 576,
+    "median_abs_logratio_change_measurable": 1.2128143775743148,
+    "p90_abs_logratio_change_measurable": 3.600064569997855,
     "pass": false
   },
   "rewording": {
@@ -89,7 +93,8 @@
       }
     },
     "worst_flip_rate": 0.03205128205128205,
-    "pass": true
+    "worst_topic_change_rate": 0.08333333333333333,
+    "pass": false
   },
   "coupling": {
     "skipped": "questions are answered in isolated prompts by this model"

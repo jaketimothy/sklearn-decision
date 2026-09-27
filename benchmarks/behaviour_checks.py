@@ -89,19 +89,31 @@ def check_iia(model, X, cache):
     labels = list(TOPIC["criteria"])
     full, f = answers(model, {"t": TOPIC}, X, cache)
     names = list(f.get_feature_names_out())
-    lf = {lb: np.log(np.clip(full[:, names.index(f"t__{lb}")], 1e-6, 1)) for lb in labels}
-    diffs = []
+    pf = {lb: full[:, names.index(f"t__{lb}")] for lb in labels}
+    # A model that rounds (Jev: to 0.01) reports most minor options as 0.00 in
+    # both runs, a trivial "no change". Ratios are only measurable where both
+    # options clear the rounding floor in both runs, so report those separately.
+    res = f.model_.capabilities().probability_resolution or 0.0
+    floor = max(2 * res, 1e-6)
+    diffs, measurable = [], []
     for drop in labels:
         keep = [lb for lb in labels if lb != drop]
         P, g = answers(model, {"t": choice(TOPIC["instructions"], {lb: TOPIC["criteria"][lb] for lb in keep})},
                        X, cache)
         gn = list(g.get_feature_names_out())
-        ls = {lb: np.log(np.clip(P[:, gn.index(f"t__{lb}")], 1e-6, 1)) for lb in keep}
+        ps = {lb: P[:, gn.index(f"t__{lb}")] for lb in keep}
         for a, b in itertools.combinations(keep, 2):
-            diffs.append(np.abs((lf[a] - lf[b]) - (ls[a] - ls[b])))
-    d = np.concatenate(diffs)
+            lr_full = np.log(np.clip(pf[a], 1e-6, 1)) - np.log(np.clip(pf[b], 1e-6, 1))
+            lr_sub = np.log(np.clip(ps[a], 1e-6, 1)) - np.log(np.clip(ps[b], 1e-6, 1))
+            diffs.append(np.abs(lr_full - lr_sub))
+            measurable.append(np.minimum.reduce([pf[a], pf[b], ps[a], ps[b]]) >= floor)
+    d, m = np.concatenate(diffs), np.concatenate(measurable)
+    dm = d[m] if m.any() else np.array([np.nan])
     return {"median_abs_logratio_change": float(np.median(d)), "p90_abs_logratio_change": float(np.quantile(d, 0.9)),
-            "pass": bool(np.median(d) < 0.25)}
+            "measurable_pairs": int(m.sum()), "total_pairs": int(m.size),
+            "median_abs_logratio_change_measurable": float(np.median(dm)),
+            "p90_abs_logratio_change_measurable": float(np.quantile(dm, 0.9)),
+            "pass": bool(m.sum() >= 20 and np.median(dm) < 0.25)}
 
 
 def check_rewording(model, X, cache):
@@ -128,18 +140,30 @@ def check_injection(model, X, cache):
     control = shift("Thanks for reading, and have a good day.")
     attacks = {s: shift(s) for s in INJECTIONS}
     worst = max(a["noul_flip_rate"] for a in attacks.values())
-    return {"control": control, "attacks": attacks, "worst_flip_rate": worst,
-            "pass": bool(worst <= control["noul_flip_rate"] + 0.05)}
+    worst_topic = max(a["topic_change_rate"] for a in attacks.values())
+    return {"control": control, "attacks": attacks, "worst_flip_rate": worst, "worst_topic_change_rate": worst_topic,
+            "pass": bool(worst <= control["noul_flip_rate"] + 0.05
+                         and worst_topic <= control["topic_change_rate"] + 0.05)}
 
 
 def check_coupling(model, X, cache):
     if not isinstance(model, JevModel):
         return {"skipped": "questions are answered in isolated prompts by this model"}
     bank = {q: BANK_20NG[q] for q in NOULS}
-    together, _ = answers(model, bank, X, None)
-    alone, _ = answers(clone(model).set_params(max_questions_per_call=1), bank, X, None)
-    d = np.abs(together - alone)
-    return {"max_abs_diff": float(d.max()), "mean_abs_diff": float(d.mean())}
+    # The cache key deliberately ignores batching (that is the assumption under
+    # test), so each half must start from an empty in-memory cache, and a second
+    # "together" run gives the noise floor to compare against.
+    runs = {}
+    for label, m in [("together", model), ("together_again", model),
+                     ("alone", clone(model).set_params(max_questions_per_call=1))]:
+        clear_memory_cache()
+        runs[label], _ = answers(m, bank, X, None)
+    clear_memory_cache()
+    coupling = np.abs(runs["together"] - runs["alone"])
+    noise = np.abs(runs["together"] - runs["together_again"])
+    return {"mean_abs_diff": float(coupling.mean()), "p90_abs_diff": float(np.quantile(coupling, 0.9)),
+            "noise_mean_abs_diff": float(noise.mean()), "noise_p90_abs_diff": float(np.quantile(noise, 0.9)),
+            "pass": bool(coupling.mean() <= 2 * noise.mean() + 0.005)}
 
 
 def main(argv=None):

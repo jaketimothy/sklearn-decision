@@ -96,7 +96,7 @@ class QuestionFeaturizer(TransformerMixin, BaseEstimator):
     model : str or DecisionModel
         The decision model; required. A string resolves through the model
         registry: "hf:<repo id>[@revision]" -> a local open-weights
-        ``TransformersModel``, "jev-1.13" -> ``JevModel`` (hosted: rows are
+        ``TransformersModel``, "jev-latest" -> ``JevModel`` (hosted: rows are
         sent to TypeSafe). Pass an instance to configure it; its parameters
         are nested (``model__timeout``).
     link : {"identity", "logit", "clr"}
@@ -127,8 +127,10 @@ class QuestionFeaturizer(TransformerMixin, BaseEstimator):
         On a failed row, raise (after caching the successes) or emit NaNs.
         HistGradientBoosting handles NaN natively. Fatal errors such as bad
         credentials always raise.
-    logit_eps : float
-        Probabilities are clipped to [eps, 1 - eps] before logit/clr.
+    logit_eps : float or None
+        Probabilities are clipped to [eps, 1 - eps] before logit/clr. None
+        (default) uses half the model's ``probability_resolution`` (0.005 for
+        Jev, which rounds to 0.01), else 1e-4. Resolved as ``logit_eps_``.
     verbose : bool
 
     Attributes
@@ -157,7 +159,7 @@ class QuestionFeaturizer(TransformerMixin, BaseEstimator):
         state_fn: Callable[[Any], Any] | None = None,
         cache_path: str | None = None,
         on_error: str = "raise",
-        logit_eps: float = 1e-4,
+        logit_eps: float | None = None,
         verbose: bool = False,
     ):
         self.questions = questions
@@ -184,6 +186,8 @@ class QuestionFeaturizer(TransformerMixin, BaseEstimator):
         self._validate_params()
         self.model_ = resolve_model(self.model)
         caps = self.model_.capabilities()
+        self.logit_eps_ = (self.logit_eps if self.logit_eps is not None
+                           else caps.probability_resolution / 2 if caps.probability_resolution else 1e-4)
         for name, q in self.questions.items():
             validate_question(name, q, max_choice_options=caps.max_choice_options,
                               max_score_levels=caps.max_score_levels)
@@ -214,7 +218,7 @@ class QuestionFeaturizer(TransformerMixin, BaseEstimator):
         states = prepare_states(self, X, reset=False, state_columns=self.state_columns,
                                 state_fn=self.state_fn)
         out = self._answer_matrix(states)
-        return apply_link(out, self.link, self._prob_mask_, self._simplex_groups_, self.logit_eps)
+        return apply_link(out, self.link, self._prob_mask_, self._simplex_groups_, self.logit_eps_)
 
     def get_feature_names_out(self, input_features=None):
         check_is_fitted(self, "feature_names_out_")
@@ -252,7 +256,7 @@ class QuestionFeaturizer(TransformerMixin, BaseEstimator):
             raise ValueError(f"score_repr must be 'ev', 'probs' or 'both', got {self.score_repr!r}")
         if self.on_error not in ("raise", "nan"):
             raise ValueError(f"on_error must be 'raise' or 'nan', got {self.on_error!r}")
-        if not 0 < self.logit_eps < 0.5:
+        if self.logit_eps is not None and not 0 < self.logit_eps < 0.5:
             raise ValueError(f"logit_eps must be in (0, 0.5), got {self.logit_eps!r}")
         if self.state_fn is not None and not callable(self.state_fn):
             raise TypeError("state_fn must be callable or None")

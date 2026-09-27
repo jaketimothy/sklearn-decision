@@ -229,7 +229,7 @@ def test_grid_search_over_nested_params(texts):
 
 def test_estimate_cost_delegates_to_model(texts):
     assert feat().estimate_cost(texts) == {"rows": len(texts), "requests": len(texts)}
-    est = QuestionFeaturizer(BANK, model="jev-1.13", cache_path=None).estimate_cost(texts)
+    est = QuestionFeaturizer(BANK, model="jev-latest", cache_path=None).estimate_cost(texts)
     assert est["requests"] == len(texts) and est["est_cost_usd"] >= 0
 
 

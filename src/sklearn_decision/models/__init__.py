@@ -1,7 +1,7 @@
 """Decision-model backends.
 
 Strings resolve through the registry here: "hf:<repo id>[@revision]" for a
-local open-weights model, "jev-<version>" for TypeSafe's hosted Jev,
+local open-weights model, "jev-latest" / "jev-preview" for TypeSafe's hosted Jev,
 "fake-<version>" for the offline test model. Pass an instance for full
 control over its parameters."""
 from .base import Capabilities, DecisionModel, register_model, registered_prefixes, resolve_model

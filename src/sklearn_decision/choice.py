@@ -296,14 +296,14 @@ class ChoiceEncoder(TransformerMixin, BaseEstimator):
         states = prepare_states(self, X, reset=False, state_columns=base.state_columns, state_fn=base.state_fn)
         P = base._answer_matrix(states)
         if self.stitch:
-            out = np.exp(np.concatenate([_stitch_log(P, blocks, base.logit_eps)
+            out = np.exp(np.concatenate([_stitch_log(P, blocks, base.logit_eps_)
                                          for blocks in self._stitch_plan_], axis=1))
         else:
             out = P
         if self.self_match == "renormalize" and self._exemplar_keys_:
             self._renormalize_self_matches(out, states)
         mask = np.ones(out.shape[1], dtype=bool)
-        return apply_link(out, self.link, mask, self._simplex_groups_, base.logit_eps)
+        return apply_link(out, self.link, mask, self._simplex_groups_, base.logit_eps_)
 
     def get_feature_names_out(self, input_features=None):
         check_is_fitted(self, "feature_names_out_")

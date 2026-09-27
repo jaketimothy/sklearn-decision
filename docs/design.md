@@ -78,8 +78,8 @@ Recalibration is likely to matter. One independent audit on civil_comments found
 
 - **Stateless fit.** Featurization makes no API calls in `fit` and is row-wise, so it can't leak labels across folds. Featurize once, then cross-validate only the downstream model.
 - **Cache per (model, question, state)** in SQLite. Adding a question fetches one column; pruning, `clone`, grid search and re-runs are free.
-- **Pin the version.** The cache records the concrete model version behind every answer, and `transform` warns when one matrix mixes versions. An upgraded model is a new encoder: start a fresh cache and refit.
-- **Model-agnostic estimators.** Every estimator takes `model=`: a registered name (`"jev-1.13"`) or a `DecisionModel` instance. A backend normalizes answers to one schema, declares its limits through `capabilities()`, and supplies the cache namespace, so a new backend (open-weights local models, openjev) is a new `DecisionModel` subclass plus `register_model(prefix, factory)`, with no estimator changes.
+- **Track the version.** The Jev API offers only unpinned names (`jev-latest`, `jev-preview`; checked 2026-09-26), but every response reports the concrete version (`jev-1.13.0`). The cache records it with every answer, and `transform` warns when one matrix mixes versions. An upgraded model is a new encoder: start a fresh cache and refit. Local models pin a Hub commit instead.
+- **Model-agnostic estimators.** Every estimator takes `model=`: a registered name (`"jev-latest"`, `"hf:<repo id>"`) or a `DecisionModel` instance. A backend normalizes answers to one schema, declares its limits through `capabilities()`, and supplies the cache namespace, so a new backend (open-weights local models, openjev) is a new `DecisionModel` subclass plus `register_model(prefix, factory)`, with no estimator changes.
 - **Chunking.** `JevModel(max_questions_per_call=...)` controls request size, and each request re-sends the state. The limits are 64k tokens per request, and the state plus the longest single question must fit in 32k. The maximum number of questions per call isn't documented, so we measure it (Phase 1).
 - **Failures.** Transient errors retry with backoff and honour `Retry-After`. Successful answers are cached before an error is raised. `on_error="nan"` works with HistGradientBoosting.
 - **Mixed data.** Use `ColumnTransformer`: `QuestionFeaturizer` on the text column, and numeric columns passed through untouched.
@@ -107,7 +107,7 @@ These come from TypeSafe's jev-1.13 jaggedness page. Whether the question bank i
   - **20 Newsgroups**, the same split and header/footer/quote removal as glemaitre/jev-classification-topic. That benchmark provides the TF-IDF, MiniLM+LR and HGB-on-LSA baselines plus Jev zero-shot.
   - **Banking77**, where independent evals already compare Jev with supervised encoders.
   - **One of your own domain datasets.** This is the one that matters for the ventures.
-- Pin `jev-1.13` and use one `cache_path` per model version.
+- Use `jev-latest` (the API has no pinned names), watch the reported version (`jev-1.13.0` so far), and use one `cache_path` per model version.
 
 ### Phase 1: model-behaviour checks (cheap; run before anything else)
 

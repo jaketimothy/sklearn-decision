@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import os
 import random
-import warnings
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -39,9 +38,11 @@ class JevModel(DecisionModel):
     Parameters
     ----------
     name : str
-        Model version. Pin a concrete one (default "jev-1.13"). "jev-latest"
-        works, but the cache only sees the requested name, so a silent
-        upgrade would mix versions in one feature matrix.
+        Model name as the API lists it (``GET /v1/models``): "jev-latest"
+        (default) or "jev-preview". The API offers no pinned versions, so
+        each response's concrete version (e.g. "jev-1.13.0") is recorded with
+        every cached answer, and a feature matrix that mixes versions raises a
+        warning. Start a fresh ``cache_path`` when TypeSafe upgrades.
     api_key : str or None
         Falls back to ``TYPESAFE_API_KEY``. Either may be the key itself or a
         1Password secret reference such as ``"op://Private/Typesafe API/credential"``,
@@ -74,7 +75,7 @@ class JevModel(DecisionModel):
         :class:`DecisionModelError` is raised.
     """
 
-    def __init__(self, name: str = "jev-1.13", *, api_key: str | None = None, base_url: str | None = None,
+    def __init__(self, name: str = "jev-latest", *, api_key: str | None = None, base_url: str | None = None,
                  timeout: float = 30.0, max_retries: int = 5, max_concurrency: int = 16,
                  max_questions_per_call: int = 50, transport: httpx.AsyncBaseTransport | None = None,
                  max_cost_usd: float | None = None):
@@ -92,10 +93,7 @@ class JevModel(DecisionModel):
 
     def resolve(self) -> JevModel:
         if not isinstance(self.name, str) or not self.name.startswith("jev-"):
-            raise ValueError(f"name must be a Jev model name such as 'jev-1.13', got {self.name!r}")
-        if self.name.endswith("latest"):
-            warnings.warn(f"model {self.name!r} is not pinned: cached answers from different versions "
-                          "can end up in one feature matrix. Pin a concrete version.", stacklevel=3)
+            raise ValueError(f"name must be a Jev model name such as 'jev-latest', got {self.name!r}")
         for p in ("max_retries",):
             if not isinstance(getattr(self, p), int) or getattr(self, p) < 0:
                 raise ValueError(f"{p} must be an int >= 0")
@@ -118,6 +116,7 @@ class JevModel(DecisionModel):
             max_questions_per_call=self.max_questions_per_call,
             native_confidence=True,
             deterministic=False,  # published tests put the noul noise floor around 0.01
+            probability_resolution=0.01,  # the API reports probabilities to 2 decimals
         )
 
     def answer(self, items: Sequence[tuple[Any, Mapping[str, dict]]]) -> list[Response | BaseException]:

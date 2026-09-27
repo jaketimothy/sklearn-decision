@@ -7,8 +7,8 @@ Encoders:
     ChoiceEncoder      (a codebook of options -> simplex embeddings)
 
 Every estimator needs ``model=``: a registered name such as
-"hf:google/gemma-4-12b-it" (local open weights) or "jev-1.13" (TypeSafe's
-hosted API), or a DecisionModel instance such as ``JevModel("jev-1.13",
+"hf:google/gemma-4-12b-it" (local open weights) or "jev-latest" (TypeSafe's
+hosted API), or a DecisionModel instance such as ``JevModel("jev-latest",
 timeout=60)``. Nothing is sent anywhere until you choose.
 """
 from ._answers import DecisionModelError, DistAnswer, NoulAnswer, Response

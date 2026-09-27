@@ -73,7 +73,7 @@ def mock(server):
 
 def model(server, **kw):
     kw.setdefault("api_key", "test-key")
-    return JevModel("jev-1.13", transport=mock(server), **kw)
+    return JevModel("jev-latest", transport=mock(server), **kw)
 
 
 def feat(server, **kw):
@@ -88,7 +88,7 @@ def test_payload_shape_auth_and_normalization():
     req, body = srv.requests[0]
     assert req.url == "https://api.typesafe.ai/v1/systemone"
     assert req.headers["authorization"] == "Bearer test-key"
-    assert body == {"model": "jev-1.13", "state": "hello", "questions": BANK}
+    assert body == {"model": "jev-latest", "state": "hello", "questions": BANK}
     names = list(f.get_feature_names_out())
     row = dict(zip(names, X[0]))
     assert row["refund"] == 0.8
@@ -180,7 +180,7 @@ def test_malformed_response_is_a_per_row_error():
 def test_capabilities_enforced():
     big = choice("x", [str(i) for i in range(256)])
     with pytest.raises(ValueError, match="limit of 255"):
-        QuestionFeaturizer({"q": big}, model="jev-1.13").fit(["a"])
+        QuestionFeaturizer({"q": big}, model="jev-latest").fit(["a"])
 
 
 def test_spending_cap_blocks_before_sending():
@@ -214,21 +214,24 @@ def test_default_cache_is_shared_in_memory_and_writes_nothing(tmp_path, monkeypa
 
 
 def test_registry_resolution():
-    assert isinstance(resolve_model("jev-1.13"), JevModel)
-    assert resolve_model("jev-1.13").name == "jev-1.13"
+    assert isinstance(resolve_model("jev-latest"), JevModel)
+    assert resolve_model("jev-latest").name == "jev-latest"
     assert isinstance(resolve_model("fake-2"), FakeModel)
     with pytest.raises(ValueError, match="Registered prefixes"):
         resolve_model("gpt-9")
     with pytest.raises(TypeError):
         resolve_model(42)
-    m = JevModel("jev-1.13", timeout=5)
+    m = JevModel("jev-latest", timeout=5)
     r = resolve_model(m)
     assert r is not m and r.timeout == 5
 
 
-def test_latest_warns():
-    with pytest.warns(UserWarning, match="not pinned"):
-        resolve_model("jev-latest")
+def test_default_name_and_rounding_capability():
+    m = resolve_model("jev-latest")
+    assert m.name == JevModel().name == "jev-latest"
+    assert m.capabilities().probability_resolution == 0.01
+    f = QuestionFeaturizer(BANK, model="jev-latest", link="logit").fit(["a"])
+    assert f.logit_eps_ == 0.005  # half the API's rounding step
 
 
 def test_invalid_jev_params():
@@ -242,11 +245,11 @@ def test_invalid_jev_params():
 @pytest.mark.skipif(not os.environ.get("TYPESAFE_API_KEY"), reason="needs TYPESAFE_API_KEY")
 def test_live_smoke(tmp_path):
     texts = ["Refund my order please.", "How do I reset my API key?", "Great service!"]
-    f = QuestionFeaturizer(BANK, model="jev-1.13", cache_path=str(tmp_path / "live.sqlite"),
+    f = QuestionFeaturizer(BANK, model="jev-latest", cache_path=str(tmp_path / "live.sqlite"),
                            score_repr="both", include_confidence=True).fit(texts)
     X = f.transform(texts)
     assert X.shape == (3, len(f.get_feature_names_out())) and not np.isnan(X).any()
     np.testing.assert_allclose(X[:, f.feature_groups_["product"][:2]].sum(axis=1), 1, atol=1e-3)
-    clf = ChoiceClassifier("Which product is discussed?", {"app": None, "api": None}, model="jev-1.13",
+    clf = ChoiceClassifier("Which product is discussed?", {"app": None, "api": None}, model="jev-latest",
                            featurizer=QuestionFeaturizer(cache_path=str(tmp_path / "live.sqlite"))).fit(texts)
     assert set(clf.predict(texts)) <= {"app", "api"}

@@ -27,6 +27,10 @@ class Capabilities:
         Whether choice/score answers carry the model's own confidence.
     deterministic : bool
         Whether identical requests return identical answers.
+    probability_resolution : float or None
+        Step to which the model rounds reported probabilities (Jev: 0.01),
+        or None for full precision. Log-odds features clip at half a step,
+        so a rounded 0.0 doesn't become an outlier.
     """
 
     max_choice_options: int | None = None
@@ -34,6 +38,7 @@ class Capabilities:
     max_questions_per_call: int | None = None
     native_confidence: bool = False
     deterministic: bool = False
+    probability_resolution: float | None = None
 
 
 class DecisionModel(BaseEstimator, ABC):
@@ -110,7 +115,7 @@ def resolve_model(model: str | DecisionModel | None) -> DecisionModel:
     if model is None:
         raise ValueError(
             "Choose a decision model, e.g. model='hf:<repo id>' (local open weights; nothing leaves "
-            "the machine) or model='jev-1.13' (TypeSafe's hosted API: rows are sent to TypeSafe), or pass "
+            "the machine) or model='jev-latest' (TypeSafe's hosted API: rows are sent to TypeSafe), or pass "
             f"a DecisionModel instance. Registered prefixes: {registered_prefixes()}"
         )
     if isinstance(model, DecisionModel):

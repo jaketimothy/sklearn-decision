@@ -15,7 +15,7 @@ The model is a parameter, and you always choose it explicitly:
 | `model=` | Runs | Notes |
 |---|---|---|
 | `"hf:<repo id>[@revision]"` | locally, open weights (`TransformersModel`) | Nothing leaves the machine. A frozen instruction-tuned LM read out through its answer-token logits. Deterministic. |
-| `"jev-1.13"` | TypeSafe's hosted API (`JevModel`) | Rows are sent to TypeSafe. Needs `TYPESAFE_API_KEY`; has a `max_cost_usd` cap. |
+| `"jev-latest"` | TypeSafe's hosted API (`JevModel`) | Rows are sent to TypeSafe. Needs `TYPESAFE_API_KEY` (the key or a 1Password `op://` reference); has a `max_cost_usd` cap. |
 | a `DecisionModel` instance | anywhere | Full control over its parameters, which are nested for grid search (`model__batch_size`). |
 
 ## Install
@@ -83,11 +83,13 @@ from sklearn_decision import JevModel, TransformersModel, FakeModel
 
 TransformersModel("google/gemma-4-12b-it", revision="<commit sha>", dtype="bfloat16",
                   batch_size=16, max_state_tokens=2048)
-JevModel("jev-1.13", timeout=60, max_questions_per_call=25, max_cost_usd=5.0)
+JevModel("jev-latest", timeout=60, max_questions_per_call=25, max_cost_usd=5.0)
 FakeModel()                                                     # offline and deterministic, for tests
 ```
 
 - **Local models** read answers from the next-token logits: Yes/No for noul, option letters for choice, level digits for score. Each row's text is encoded once and its key/value cache is shared by all of that row's questions. Pin `revision` to a commit for reproducible features; the resolved commit is recorded with every answer. See the [benchmarks](benchmarks/README.md) for what a small CPU model does and doesn't deliver.
+- **Credentials:** `TYPESAFE_API_KEY` or `JevModel(api_key=...)` can be a 1Password secret reference such as `op://Personal/Typesafe API/password`. It's resolved with the 1Password CLI (`op read`) on the first request and kept only in process memory, never on the estimator. For scripts, `op run -- python ...` resolves it once for the whole run.
+- **Jev versions:** the API lists only `jev-latest` and `jev-preview`. Each answer records the concrete version (`jev-1.13.0`), and a feature matrix that mixes versions raises a warning.
 - **Caching:** every answer is cached by (model, prompt template, question, row). The default `cache_path=None` keeps answers in memory for the process, shared by clones and grid-search candidates, and writes nothing to disk. Pass `cache_path="answers.sqlite"` to persist them.
 - **New backends** subclass `DecisionModel`, implementing `answer`, `capabilities` and `cache_namespace`. Register them with `register_model("prefix:", factory)`.
 

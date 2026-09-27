@@ -85,12 +85,12 @@ def test_confidence_hidden_when_model_has_none(texts):
     clf.fit(texts)
     assert not hasattr(clf, "predict_confidence")
     assert clf.predict_proba(texts).shape == (len(texts), 2)
-    assert hasattr(ChoiceClassifier("x", model="jev-1.13"), "predict_confidence")
+    assert hasattr(ChoiceClassifier("x", model="jev-latest"), "predict_confidence")
 
 
 def test_model_param_overrides_template_and_is_not_mutated(texts):
     m = FakeModel(seed=3)
-    clf = NoulClassifier("x", model=m, featurizer=QuestionFeaturizer(model="jev-1.13", cache_path=None))
+    clf = NoulClassifier("x", model=m, featurizer=QuestionFeaturizer(model="jev-latest", cache_path=None))
     clf.fit(texts)
     assert isinstance(clf.model_, FakeModel) and clf.model_ is not m
     assert clf.model is m and m.usage["calls"] == 0
@@ -124,7 +124,7 @@ def test_plugs_into_calibration_and_grid_search(texts):
 
 
 def test_jev_model_instance_as_param(texts):
-    clf = ChoiceClassifier("x", dict.fromkeys("ab"), model=JevModel("jev-1.13", timeout=60), featurizer=FEAT)
+    clf = ChoiceClassifier("x", dict.fromkeys("ab"), model=JevModel("jev-latest", timeout=60), featurizer=FEAT)
     assert clf.get_params()["model__timeout"] == 60
     clf.fit(texts)  # no credentials needed to fit
-    assert clf.model_.cache_namespace() == "jev:jev-1.13"
+    assert clf.model_.cache_namespace() == "jev:jev-latest"

@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sklearn-decision"
+version = "0.1.0.dev0"
+description = "Decision models (Jev and friends) as scikit-learn estimators and featurizers"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Jake Timothy" }]
+dependencies = [
+    "numpy>=1.24",
+    "scikit-learn>=1.6",
+    "httpx>=0.25",
+]
+
+[project.optional-dependencies]
+local = ["torch>=2.2", "transformers>=4.45"]
+dev = ["pytest>=7", "pandas>=2", "ruff>=0.5"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sklearn_decision"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "live: calls the real Jev API (needs TYPESAFE_API_KEY)",
+    "hub: downloads a real model from the Hugging Face Hub",
+]
+addopts = "-m 'not live and not hub'"
+
+[tool.ruff]
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["B905"]  # zip(strict=) is noise for same-length row/answer pairs

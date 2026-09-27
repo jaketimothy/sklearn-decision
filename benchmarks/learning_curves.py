@@ -26,7 +26,13 @@ from sklearn.preprocessing import StandardScaler
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from data import BANK_20NG, load_20ng  # noqa: E402
 
-from sklearn_decision import ChoiceClassifier, QuestionFeaturizer, TransformersModel, resolve_model  # noqa: E402
+from sklearn_decision import (  # noqa: E402
+    ChoiceClassifier,
+    JevModel,
+    QuestionFeaturizer,
+    TransformersModel,
+    resolve_model,
+)
 
 HERE = Path(__file__).resolve().parent
 TOPIC_TO_CLASS = {"atheism": "alt.atheism", "graphics": "comp.graphics", "religion": "talk.religion.misc",
@@ -62,6 +68,9 @@ def make_model(args):
         name, _, rev = args.model[3:].partition("@")
         return TransformersModel(name, revision=rev or "main", device=args.device, dtype=args.dtype,
                                  batch_size=args.batch_size, max_state_tokens=args.max_state_tokens)
+    if args.model.startswith("jev-"):
+        # key from TYPESAFE_API_KEY: the key itself or an op:// 1Password reference
+        return JevModel(args.model, max_cost_usd=args.max_cost_usd)
     return resolve_model(args.model)
 
 
@@ -88,6 +97,7 @@ def main(argv=None):
     ap.add_argument("--dtype", default="float32")
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--max-state-tokens", type=int, default=256)
+    ap.add_argument("--max-cost-usd", type=float, default=2.0, help="spending cap for hosted models")
     ap.add_argument("--n-train", type=int, default=600)
     ap.add_argument("--n-test", type=int, default=400)
     ap.add_argument("--sizes", default="8,16,32,64,128,256,all")

@@ -54,14 +54,18 @@ def check_saturation(model, X, cache):
     }
 
 
-def check_noise(model, X):
+def check_noise(model, X, repeats=2):
     runs = []
-    for _ in range(2):
+    for _ in range(repeats):
         clear_memory_cache()
         runs.append(answers(model, {q: BANK_20NG[q] for q in NOULS[:3]}, X, None)[0])
     clear_memory_cache()
-    diff = np.abs(runs[0] - runs[1])
-    return {"max_abs_diff": float(diff.max()), "mean_abs_diff": float(diff.mean()), "pass": bool(diff.max() < 0.01)}
+    R = np.stack(runs)  # (repeats, rows, questions)
+    spread = R.max(axis=0) - R.min(axis=0)
+    crosses = ((R > 0.5).any(axis=0) & (R <= 0.5).any(axis=0)).mean()
+    return {"repeats": repeats, "max_abs_diff": float(spread.max()), "mean_abs_diff": float(spread.mean()),
+            "std_mean": float(R.std(axis=0).mean()), "share_crossing_0.5": float(crosses),
+            "pass": bool(np.quantile(spread, 0.9) < 0.05)}
 
 
 def check_order(model, X, cache):
@@ -145,6 +149,8 @@ def main(argv=None):
     ap.add_argument("--dtype", default="float32")
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--max-state-tokens", type=int, default=256)
+    ap.add_argument("--max-cost-usd", type=float, default=2.0, help="spending cap for hosted models")
+    ap.add_argument("--noise-repeats", type=int, default=2, help="identical runs for the noise check")
     ap.add_argument("--n", type=int, default=100, help="rows per check (injection and noise use a quarter)")
     ap.add_argument("--n-train", type=int, default=400, help="training pool drawn as in learning_curves.py")
     ap.add_argument("--checks", default="saturation,noise,order,iia,rewording,injection,coupling")
@@ -160,7 +166,7 @@ def main(argv=None):
     for name in args.checks.split(","):
         fn = globals()[f"check_{name}"]
         rows = X[: max(8, args.n // 4)] if name in ("injection", "noise") else X
-        out[name] = fn(model, rows) if name == "noise" else fn(model, rows, cache)
+        out[name] = fn(model, rows, args.noise_repeats) if name == "noise" else fn(model, rows, cache)
         summary = {k: v for k, v in out[name].items() if not isinstance(v, (dict, list))}
         print(f"{name:10s} {summary}")
     path.parent.mkdir(parents=True, exist_ok=True)

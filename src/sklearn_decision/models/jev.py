@@ -13,6 +13,7 @@ import httpx
 from .._answers import DecisionModelError, DistAnswer, NoulAnswer, Response, opt_float
 from .._async import run_coro
 from .._cache import canon
+from .._secrets import resolve_secret
 from .base import Capabilities, DecisionModel
 
 __all__ = ["JevModel", "JevAPIError", "PRICE_PER_INPUT_MTOK", "DEFAULT_BASE_URL"]
@@ -42,8 +43,13 @@ class JevModel(DecisionModel):
         works, but the cache only sees the requested name, so a silent
         upgrade would mix versions in one feature matrix.
     api_key : str or None
-        Falls back to ``TYPESAFE_API_KEY``. Read when a request is made, so
-        estimators can be fitted and cloned without credentials.
+        Falls back to ``TYPESAFE_API_KEY``. Either may be the key itself or a
+        1Password secret reference such as ``"op://Private/Typesafe API/credential"``,
+        resolved with the 1Password CLI (``op read``) on the first request.
+        Prefer a reference or the environment variable: a literal key passed
+        here shows up in the estimator's repr and ``get_params()``. The key is
+        read when a request is made, so estimators can be fitted and cloned
+        without credentials.
     base_url : str or None
         Falls back to ``TYPESAFE_BASE_URL``, then the TypeSafe API. Pointing
         it at "https://openrouter.ai/api" also works.
@@ -170,7 +176,7 @@ class JevModel(DecisionModel):
         return base.rstrip("/") + "/v1/systemone"
 
     async def _fetch_all(self, items) -> list:
-        key = self.api_key or os.environ.get("TYPESAFE_API_KEY")
+        key = resolve_secret(self.api_key or os.environ.get("TYPESAFE_API_KEY"))
         if not key:
             raise DecisionModelError("Set TYPESAFE_API_KEY or pass JevModel(api_key=...)", fatal=True)
         sem = asyncio.Semaphore(self.max_concurrency)

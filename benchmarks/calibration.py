@@ -43,6 +43,8 @@ def main(argv=None):
     ap.add_argument("--dtype", default="float32")
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--max-state-tokens", type=int, default=256)
+    ap.add_argument("--option-permutations", type=int, default=1,
+                    help="local models: average choice answers over this many option rotations")
     ap.add_argument("--max-cost-usd", type=float, default=0.0, help="0: cache only, never call a hosted model")
     ap.add_argument("--sizes", default="16,64,400")
     ap.add_argument("--repeats", type=int, default=5)
@@ -90,6 +92,7 @@ def main(argv=None):
         row = {m: np.mean([x["log_loss"] for x in c[str(len(idx))]]) for m, c in out["calibrated"].items()}
         print(f"n={len(idx):4d} log-loss " + "  ".join(f"{m}={v:.3f}" for m, v in row.items()))
     path = HERE / "results" / (slug(args.model) + (f"-{args.tag}" if args.tag else "")) / "calibration.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(out, indent=2, default=float), encoding="utf-8")
     print("wrote", path)
 

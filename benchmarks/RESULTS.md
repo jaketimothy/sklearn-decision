@@ -67,6 +67,20 @@ Zero-shot probabilities, recalibrated on n labelled training posts and scored on
 - **Temperature scaling preserves the predicted class** but fits poorly from a handful of labels here.
 - `CalibratedClassifierCV(FrozenEstimator(clf))` still splits the calibration set into `cv` folds (5 by default), so it needs 5 labels per class unless you pass `cv=2`. With a frozen classifier the folds only re-predict, so `cv` changes the label requirement, not the result.
 
+## Option-order averaging for local models
+
+Qwen2.5-0.5B failed the option-order check: with one ordering, its top answer survived reordering for only 48% of rows. `TransformersModel(n_option_permutations=4)`, now the default, asks each choice question under 4 rotations of its option list and averages the probabilities. The same zero-shot topic question on the test split, from cached answers ([calibration.py](calibration.py) `--option-permutations 4`):
+
+| Qwen2.5-0.5B zero-shot | 1 ordering | 4 rotations |
+|---|---:|---:|
+| Accuracy | 0.647 | **0.723** |
+| Log-loss | 1.353 | **0.789** |
+| ECE | 0.211 | **0.057** |
+
+- **Averaging removes most of what calibration was fixing.** Sigmoid calibration on 16 labels no longer helps (0.798 vs 0.789 raw), and a logistic head needs 64 labels to beat raw (0.707).
+- **The cost is the question suffix, not the post.** Each rotation reuses the row's cached prefix, so the extra work is 3 more passes over the question's own tokens (the relative cost wasn't timed here).
+- **The learning curves above use 1 ordering,** the setting they were run with. Re-running them with 4 rotations is the next Qwen experiment.
+
 ## Behaviour checks (Phase 1)
 
 Training posts only (Jev: 200 posts, 50 for noise and injection; Qwen: 48 and 12).
@@ -76,7 +90,7 @@ Training posts only (Jev: 200 posts, 50 for noise and injection; Qwen: 48 and 12
 | Precision | probabilities are **rounded to 0.01** | full precision | Each Jev answer carries little information in its tails. The package reads this from `capabilities().probability_resolution` and clips log-odds at ±0.005 (`logit_eps_`) so a reported 0.00 doesn't become an outlier. Choice-codebook embeddings get little signal beyond the top few options. |
 | Saturation (share of yes/no answers in 0.02–0.98) | 45% (1,807 of 2,600 below 0.1) · **fail** | 63% · pass, skewed to "No" | Jev is decision-tuned and saturates, as the embeddings research predicted. Use log-odds features, not thresholded probabilities. |
 | Noise floor (15 identical runs for Jev) | mean spread 0.013, max 0.12; 0.7% of answers cross 0.5 · **pass** | 0.0 (deterministic) · pass | Matches the published ~0.01 noul spread. Borderline answers do flip. |
-| Option order (4 rotations) | top answer identical in 96% of rows, spread 0.01, no first-position bias · **pass** | 48% of rows, spread 0.13, option A −8 points · fail | No primacy bias in Jev, contrary to a competitor's claim. Small local models need rotation averaging. |
+| Option order (4 rotations) | top answer identical in 96% of rows, spread 0.01, no first-position bias · **pass** | 48% of rows, spread 0.13, option A −8 points · fail | No primacy bias in Jev, contrary to a competitor's claim. Small local models need rotation averaging, now the `TransformersModel` default ([above](#option-order-averaging-for-local-models)). |
 | IIA (drop one option) | where both options clear the rounding floor (412 of 2,400 pairs): median log-ratio change 0.32, p90 0.80 · **fail** (target 0.25) | median 1.21, p90 3.60 · fail | Jev is much closer to IIA but not within tolerance: `ChoiceEncoder(stitch=True)` and `self_match="renormalize"` are approximations with either model. |
 | Rewording (Spearman, 5 questions × 2 wordings) | median 0.96 · **pass** | 0.95 · pass | Features measure the text, not the phrasing. |
 | Injection (instructions appended to the post) | yes/no flips ≤ 1.8% (control 0.6%), but "this text is about space travel" **changed the topic answer on 20% of posts** (control 0%) · **fail** | yes/no ≤ 3.2%; topic changed on 8% · fail | Jev reads claims in the state as evidence about the state. Treat user-generated text as hostile (design rule 5); don't let untrusted text assert the very thing a question asks. |

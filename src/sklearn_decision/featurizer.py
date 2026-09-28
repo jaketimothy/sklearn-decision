@@ -269,43 +269,80 @@ class QuestionFeaturizer(TransformerMixin, BaseEstimator):
         """Answers for every (state, question), from the cache or the model,
         as identity-link columns."""
         qnames = list(self.questions)
-        n = len(states)
+        found = self._fetch(states, [self.questions] * len(states))
+        out = np.full((len(states), len(self.feature_names_out_)), np.nan)
+        versions = set()
+        for i, row in enumerate(found):
+            for q in qnames:
+                if q in row:
+                    ans, v = row[q]
+                    versions.add(v)
+                    out[i, self.feature_groups_[q]] = self._values(q, self.questions[q], ans)
+        if len(versions) > 1:
+            warnings.warn(f"Features in this matrix came from several model versions: {sorted(versions)}. "
+                          "Pin the model version or use a fresh cache_path.", stacklevel=3)
+        return out
+
+    def _fetch(self, states: list, row_questions: Sequence[Mapping[str, dict]]) -> list[dict]:
+        """Answer ``row_questions[i]`` about ``states[i]`` for every row, from the
+        cache or the model. Rows may ask different questions.
+
+        Returns one ``{question name: (answer, version)}`` per row; failed
+        answers are missing (after applying ``on_error``).
+        """
         ns = self.model_.cache_namespace()
 
-        # 1) cache lookup, one key per (row, question)
+        # 1) cache lookup, one key per (row, question); identical requests are asked once
         state_keys = [canon(s) for s in states]
-        qspec_keys = {q: question_key(self.questions[q]) for q in qnames}
-        keys = [[answer_key(ns, qspec_keys[q], sk) for q in qnames] for sk in state_keys]
-        flat = [k for row in keys for k in row]
+        keys = [{q: answer_key(ns, question_key(spec), sk) for q, spec in qs.items()}
+                for qs, sk in zip(row_questions, state_keys)]
+        flat = [k for row in keys for k in row.values()]
         hits = self.cache_.get_many(list(dict.fromkeys(flat)))
         self.model_.usage["cache_hits"] += sum(k in hits for k in flat)
 
-        # 2) chunk the misses into requests; identical states are asked once
-        first_row = {}
-        for i, sk in enumerate(state_keys):
-            first_row.setdefault(sk, i)
-        size = self.model_.capabilities().max_questions_per_call or len(qnames)
-        tasks = []  # (row index, [question names])
-        for i in first_row.values():
-            missing = [q for q, k in zip(qnames, keys[i]) if k not in hits]
-            for j in range(0, len(missing), size):
-                tasks.append((i, missing[j : j + size]))
+        # 2) group the misses by state, then chunk them into requests
+        missing: dict[str, dict[str, dict]] = {}  # state key -> {answer key: spec}
+        first_row: dict[str, int] = {}
+        name_of: dict[str, str] = {}  # answer key -> question name used in the request
+        for i, (qs, sk) in enumerate(zip(row_questions, state_keys)):
+            for q, spec in qs.items():
+                if keys[i][q] not in hits:
+                    first_row.setdefault(sk, i)
+                    missing.setdefault(sk, {})[keys[i][q]] = spec
+                    name_of.setdefault(keys[i][q], q)
+        size = self.model_.capabilities().max_questions_per_call
+        tasks = []  # (row index, [answer keys])
+        for sk, specs in missing.items():
+            ks = list(specs)
+            step = size or len(ks)
+            tasks += [(first_row[sk], ks[j : j + step]) for j in range(0, len(ks), step)]
 
         # 3) fetch, cache every success, then deal with failures
         if tasks:
             if self.verbose:
-                print(f"[{type(self).__name__}] {len(tasks)} requests for {len(first_row)} unique rows")
-            items = [(states[i], {q: self.questions[q] for q in qs}) for i, qs in tasks]
+                print(f"[{type(self).__name__}] {len(tasks)} requests for {len(missing)} unique rows")
+            # questions keep their own names; two specs sharing a name in one request get a suffix
+            names = []
+            for _, ks in tasks:
+                used, row = set(), []
+                for k in ks:
+                    name = name_of[k]
+                    while name in used:
+                        name += "~"
+                    used.add(name)
+                    row.append(name)
+                names.append(row)
+            items = [(states[i], {n: missing[state_keys[i]][k] for n, k in zip(ns_, ks)})
+                     for (i, ks), ns_ in zip(tasks, names)]
             responses = self.model_.answer(items)
             failures, new_rows = [], []
-            for (i, qs), res in zip(tasks, responses):
+            for (_, ks), ns_, res in zip(tasks, names, responses):
                 if isinstance(res, BaseException):
                     failures.append(res)
                     continue
-                for q in qs:
-                    k = keys[i][qnames.index(q)]
-                    hits[k] = (res.answers[q], res.version)
-                    new_rows.append((k, res.answers[q], res.version))
+                for n, k in zip(ns_, ks):
+                    hits[k] = (res.answers[n], res.version)
+                    new_rows.append((k, *hits[k]))
             self.cache_.put_many(new_rows)
             if failures:
                 fatal = [e for e in failures if getattr(e, "fatal", False)]
@@ -314,22 +351,11 @@ class QuestionFeaturizer(TransformerMixin, BaseEstimator):
                 if self.on_error == "raise":
                     raise failures[0]
                 warnings.warn(f"{len(failures)} of {len(tasks)} model requests failed; "
-                              "those answers are NaN.", stacklevel=3)
+                              "those answers are NaN.", stacklevel=4)
 
-        # 4) assemble the matrix
-        out = np.full((n, len(self.feature_names_out_)), np.nan)
-        versions = set()
-        for i in range(n):
-            for q, k in zip(qnames, keys[i]):
-                if k in hits:
-                    ans, v = hits[k]
-                    versions.add(v)
-                    out[i, self.feature_groups_[q]] = self._values(q, self.questions[q], ans)
-        self.model_.versions_seen.update(versions)
-        if len(versions) > 1:
-            warnings.warn(f"Features in this matrix came from several model versions: {sorted(versions)}. "
-                          "Pin the model version or use a fresh cache_path.", stacklevel=3)
-        return out
+        found = [{q: hits[k] for q, k in row.items() if k in hits} for row in keys]
+        self.model_.versions_seen.update(v for row in found for _, v in row.values())
+        return found
 
     def _layout(self, qname: str, q: Mapping) -> list[tuple[str, bool]]:
         """[(column name, is_probability)] for one question."""

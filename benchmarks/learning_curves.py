@@ -67,7 +67,8 @@ def make_model(args):
     if args.model.startswith("hf:"):
         name, _, rev = args.model[3:].partition("@")
         return TransformersModel(name, revision=rev or "main", device=args.device, dtype=args.dtype,
-                                 batch_size=args.batch_size, max_state_tokens=args.max_state_tokens)
+                                 batch_size=args.batch_size, max_state_tokens=args.max_state_tokens,
+                                 n_option_permutations=getattr(args, "option_permutations", 1))
     if args.model.startswith("jev-"):
         # key from TYPESAFE_API_KEY: the key itself or an op:// 1Password reference
         return JevModel(args.model, max_cost_usd=args.max_cost_usd)
@@ -114,6 +115,8 @@ def main(argv=None):
     ap.add_argument("--dtype", default="float32")
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--max-state-tokens", type=int, default=256)
+    ap.add_argument("--option-permutations", type=int, default=1,
+                    help="local models: average choice answers over this many option rotations")
     ap.add_argument("--max-cost-usd", type=float, default=2.0, help="spending cap for hosted models")
     ap.add_argument("--n-train", type=int, default=600)
     ap.add_argument("--n-test", type=int, default=400)

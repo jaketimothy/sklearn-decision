@@ -169,13 +169,19 @@ class ChoiceEncoder(TransformerMixin, BaseEstimator):
         None with no model limit keeps the codebook in one question.
     max_exemplar_chars : int
         Exemplar text is truncated to this length in the option description.
-    self_match : {"renormalize", "keep"}
-        A row that is itself an exemplar trivially picks its own option. With
-        "renormalize" that option's probability is zeroed and the rest of its
-        simplex renormalized, both for training rows and for any identical
-        row seen later, so exemplars can stay in the training set. This
-        assumes the model obeys independence of irrelevant alternatives.
-        "keep" leaves answers untouched (for ablations).
+    self_match : {"reask", "renormalize", "keep"}
+        A row that is itself an exemplar trivially picks its own option. This
+        applies to training rows and to any identical row seen later, so
+        exemplars can stay in the training set.
+
+        - "reask" (default): ask that row the affected question again with
+          its own option removed. Exact; costs one extra question per
+          exemplar row and view.
+        - "renormalize": zero the own option and renormalize the rest of its
+          simplex. Free, but only valid if the model obeys independence of
+          irrelevant alternatives, which neither Jev nor Qwen2.5-0.5B did in
+          our behaviour checks (benchmarks/RESULTS.md).
+        - "keep": leave answers untouched (for ablations).
     link : {"clr", "logit", "identity"}
         Output scale; "clr" is the natural geometry for compositions.
     stitch : bool
@@ -210,7 +216,7 @@ class ChoiceEncoder(TransformerMixin, BaseEstimator):
     def __init__(self, codebook=None, views: str | Mapping[str, str] | None = None, *,
                  n_exemplars: int | None = None, anchor: tuple[str, str | None] | None = None,
                  max_options: int | None = None, max_exemplar_chars: int = 400,
-                 self_match: str = "renormalize", link: str = "clr", stitch: bool = False,
+                 self_match: str = "reask", link: str = "clr", stitch: bool = False,
                  random_state=None, model: str | DecisionModel | None = None,
                  featurizer: QuestionFeaturizer | None = None):
         self.codebook = codebook
@@ -295,6 +301,8 @@ class ChoiceEncoder(TransformerMixin, BaseEstimator):
         base = self.featurizer_
         states = prepare_states(self, X, reset=False, state_columns=base.state_columns, state_fn=base.state_fn)
         P = base._answer_matrix(states)
+        if self.self_match == "reask" and self._exemplar_keys_:
+            self._reask_self_matches(P, states)
         if self.stitch:
             out = np.exp(np.concatenate([_stitch_log(P, blocks, base.logit_eps_)
                                          for blocks in self._stitch_plan_], axis=1))
@@ -325,8 +333,8 @@ class ChoiceEncoder(TransformerMixin, BaseEstimator):
                 raise ValueError(f"codebook must be a list, a dict or 'exemplars', got {cb!r}")
         elif cb is None or not isinstance(cb, (Mapping, Sequence, np.ndarray)):
             raise ValueError("codebook must be a list, a dict or 'exemplars'")
-        if self.self_match not in ("renormalize", "keep"):
-            raise ValueError(f"self_match must be 'renormalize' or 'keep', got {self.self_match!r}")
+        if self.self_match not in ("reask", "renormalize", "keep"):
+            raise ValueError(f"self_match must be 'reask', 'renormalize' or 'keep', got {self.self_match!r}")
         if self.link not in ("identity", "logit", "clr"):
             raise ValueError(f"link must be 'identity', 'logit' or 'clr', got {self.link!r}")
         if self.anchor is not None and (not isinstance(self.anchor, (tuple, list)) or len(self.anchor) != 2):
@@ -374,6 +382,43 @@ class ChoiceEncoder(TransformerMixin, BaseEstimator):
         self._simplex_groups_ = simplex
         self._self_cols_ = self_cols
         self._stitch_plan_ = stitch_plan
+
+    def _reask_self_matches(self, P: np.ndarray, states: list) -> None:
+        """For rows that are exemplars, replace each affected question's answer
+        with the answer to the same question minus the row's own option(s)."""
+        feat = self.featurizer_
+        rows, row_questions = [], []
+        for i, s in enumerate(states):
+            own = set(self._exemplar_keys_.get(_state_hash(s), ()))
+            if not own:
+                continue
+            questions = {}
+            for q, spec in feat.questions.items():
+                labels = list(spec["criteria"])
+                if own.isdisjoint(labels):
+                    continue
+                cols = feat.feature_groups_[q]
+                kept = [lb for lb in labels if lb not in own]
+                P[i, cols] = 0.0
+                if len(kept) >= 2:
+                    questions[q] = {**spec, "criteria": {lb: spec["criteria"][lb] for lb in kept}}
+                elif kept:  # only one option left: it gets all the mass
+                    P[i, cols[labels.index(kept[0])]] = 1.0
+            if questions:
+                rows.append(i)
+                row_questions.append(questions)
+        if not rows:
+            return
+        found = feat._fetch([states[i] for i in rows], row_questions)
+        for i, questions, answers in zip(rows, row_questions, found):
+            for q, spec in questions.items():
+                cols = feat.feature_groups_[q]
+                if q not in answers:  # failed with on_error="nan"
+                    P[i, cols] = np.nan
+                    continue
+                labels = list(feat.questions[q]["criteria"])
+                for lb, p in zip(spec["criteria"], answers[q][0].probs):
+                    P[i, cols[labels.index(lb)]] = p
 
     def _renormalize_self_matches(self, out: np.ndarray, states: list) -> None:
         for i, s in enumerate(states):

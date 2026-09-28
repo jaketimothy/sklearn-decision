@@ -27,6 +27,15 @@ First release.
   - `FakeModel`, deterministic and offline, for tests.
 - An answer cache keyed by (model, question, row): in memory by default,
   SQLite with `cache_path`.
+- `calibrate_zero_shot()`: sigmoid calibration of a frozen zero-shot
+  classifier from as few as two labels per class, the best recipe with few
+  labels in the calibration benchmark.
+- `TransformersModel(n_option_permutations=4)`: choice questions are asked
+  under several rotations of their options and averaged, cancelling
+  position bias in small local models.
+- `ChoiceEncoder(self_match="reask")`, the default: exemplar rows are
+  re-asked without their own option instead of renormalizing, which
+  assumed independence of irrelevant alternatives.
 - A benchmark harness (`benchmarks/`) with behaviour checks and learning
   curves, and results for Jev and Qwen2.5-0.5B on 20 Newsgroups.
 

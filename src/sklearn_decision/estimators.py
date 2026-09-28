@@ -39,8 +39,6 @@ _QNAME = "q"
 class _SingleQuestionEstimator(UsageMixin, BaseEstimator):
     """Shared plumbing: build, fit and query a one-question featurizer."""
 
-    _question_type: str = ""
-
     def _fit_featurizer(self, question: dict, X) -> None:
         base = self.featurizer if self.featurizer is not None else QuestionFeaturizer()
         if not isinstance(base, QuestionFeaturizer):
@@ -65,9 +63,15 @@ class _SingleQuestionEstimator(UsageMixin, BaseEstimator):
     def _n_dist_cols(self) -> int:
         return len(self.featurizer_.feature_names_out_) - int(self.featurizer_.include_confidence)
 
+    def __sklearn_tags__(self):
+        return _input_tags(super().__sklearn_tags__(), self.model)
+
+
+class _ConfidenceMixin:
+    """``predict_confidence`` for choice and score questions, when the model
+    reports a confidence of its own (Jev does; local logit readouts don't)."""
+
     def _has_confidence(self) -> bool:
-        if self._question_type == "noul":
-            return False
         if hasattr(self, "featurizer_"):
             return bool(self.featurizer_.include_confidence)
         caps = model_capabilities(self.model)
@@ -75,11 +79,20 @@ class _SingleQuestionEstimator(UsageMixin, BaseEstimator):
 
     @available_if(_has_confidence)
     def predict_confidence(self, X) -> np.ndarray:
-        """The model's own confidence per row; use it to abstain."""
-        return self._answers(X)[:, -1]
+        """The model's own confidence in each answer, e.g. to abstain below a threshold.
 
-    def __sklearn_tags__(self):
-        return _input_tags(super().__sklearn_tags__(), self.model)
+        Only available when the model reports one (``capabilities().native_confidence``).
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples,) or DataFrame
+            Rows, as for :meth:`predict`.
+
+        Returns
+        -------
+        ndarray of shape (n_samples,)
+        """
+        return self._answers(X)[:, -1]
 
 
 def _check_y_for_x(X, y):
@@ -113,8 +126,6 @@ class NoulClassifier(ClassifierMixin, _SingleQuestionEstimator):
         self.model = model
         self.featurizer = featurizer
 
-    _question_type = "noul"
-
     def fit(self, X, y=None):
         """Record the label set; no model calls. ``y`` may be None, giving
         classes [False, True]."""
@@ -140,11 +151,35 @@ class NoulClassifier(ClassifierMixin, _SingleQuestionEstimator):
         return self
 
     def predict_proba(self, X) -> np.ndarray:
+        """Class probabilities from the model's P(true), in ``classes_`` order.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples,) or DataFrame
+            Rows: strings, JSON-able records, or a DataFrame / 2-D array.
+
+        Returns
+        -------
+        ndarray of shape (n_samples, 2)
+            Raw answers; see :func:`~sklearn_decision.calibrate_zero_shot`.
+        """
         p = self._answers(X)[:, 0]
         P = np.column_stack([1 - p, p])
         return P if self._pos_idx_ == 1 else P[:, ::-1]
 
     def predict(self, X) -> np.ndarray:
+        """The positive label where P(true) >= 0.5, else the negative one.
+
+        Tune the threshold with ``TunedThresholdClassifierCV`` if 0.5 isn't right.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples,) or DataFrame
+
+        Returns
+        -------
+        ndarray of shape (n_samples,)
+        """
         p = self.predict_proba(X)[:, self._pos_idx_]
         if np.isnan(p).any():
             raise ValueError("Some rows have no answer (on_error='nan'); use predict_proba")
@@ -158,7 +193,7 @@ class NoulClassifier(ClassifierMixin, _SingleQuestionEstimator):
         return tags
 
 
-class ChoiceClassifier(ClassifierMixin, _SingleQuestionEstimator):
+class ChoiceClassifier(ClassifierMixin, _ConfidenceMixin, _SingleQuestionEstimator):
     """Zero-shot classifier: the classes are the options of one choice question.
 
     Parameters
@@ -180,8 +215,6 @@ class ChoiceClassifier(ClassifierMixin, _SingleQuestionEstimator):
         self.criteria = criteria
         self.model = model
         self.featurizer = featurizer
-
-    _question_type = "choice"
 
     def fit(self, X, y=None):
         """Record the label set; no model calls."""
@@ -211,9 +244,31 @@ class ChoiceClassifier(ClassifierMixin, _SingleQuestionEstimator):
         return self
 
     def predict_proba(self, X) -> np.ndarray:
+        """The model's distribution over the options, in ``classes_`` order.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples,) or DataFrame
+            Rows: strings, JSON-able records, or a DataFrame / 2-D array.
+
+        Returns
+        -------
+        ndarray of shape (n_samples, n_classes)
+            Raw answers; see :func:`~sklearn_decision.calibrate_zero_shot`.
+        """
         return self._answers(X)[:, : self._n_dist_cols()]  # columns follow classes_
 
     def predict(self, X) -> np.ndarray:
+        """The most probable class for each row.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples,) or DataFrame
+
+        Returns
+        -------
+        ndarray of shape (n_samples,)
+        """
         P = self.predict_proba(X)
         if np.isnan(P).any():
             raise ValueError("Some rows have no answer (on_error='nan'); use predict_proba")
@@ -225,7 +280,7 @@ class ChoiceClassifier(ClassifierMixin, _SingleQuestionEstimator):
         return tags
 
 
-class ScoreRegressor(RegressorMixin, _SingleQuestionEstimator):
+class ScoreRegressor(RegressorMixin, _ConfidenceMixin, _SingleQuestionEstimator):
     """Zero-shot ordinal regressor from one score rubric.
 
     Parameters
@@ -253,8 +308,6 @@ class ScoreRegressor(RegressorMixin, _SingleQuestionEstimator):
         self.model = model
         self.featurizer = featurizer
 
-    _question_type = "score"
-
     def fit(self, X, y=None):
         """Validate the rubric; no model calls. ``y`` is only checked."""
         if y is not None:
@@ -270,9 +323,29 @@ class ScoreRegressor(RegressorMixin, _SingleQuestionEstimator):
         return self
 
     def predict_levels_proba(self, X) -> np.ndarray:
+        """The model's distribution over the rubric's levels, low to high.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples,) or DataFrame
+
+        Returns
+        -------
+        ndarray of shape (n_samples, n_levels)
+        """
         return self._answers(X)[:, : self._n_dist_cols()]
 
     def predict(self, X) -> np.ndarray:
+        """The expected value, ``sum_i p_i * level_values[i]``, for each row.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples,) or DataFrame
+
+        Returns
+        -------
+        ndarray of shape (n_samples,)
+        """
         return self.predict_levels_proba(X) @ self.level_values_
 
     def __sklearn_tags__(self):

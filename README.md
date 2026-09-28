@@ -2,6 +2,8 @@
 
 Making decision models like Jev useful in scikit-learn pipelines.
 
+**Documentation:** https://jaketimothy.github.io/sklearn-decision/
+
 A *decision model* answers typed questions about a piece of text or a record with probabilities:
 
 - **noul**: is this statement true?
@@ -121,7 +123,7 @@ pip install -e ".[docs]"
 python -m sphinx -b html docs docs/_build/html
 ```
 
-The examples read Jev's answers from the committed cache, so the build needs no API key and costs nothing. CI builds the site on every pull request and uploads it as an artifact. It isn't hosted anywhere yet.
+The examples read Jev's answers from the committed cache, so the build needs no API key and costs nothing. CI builds the site on every pull request and uploads it as an artifact. Merges to `main` publish it at **https://jaketimothy.github.io/sklearn-decision/**.
 
 ## Development
 

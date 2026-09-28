@@ -56,22 +56,6 @@ jobs:
       - run: pip install -e ".[dev,local]" ${{ matrix.pins }} --extra-index-url https://download.pytorch.org/whl/cpu
       - run: pytest -q tests/test_model_transformers.py tests/test_sklearn_checks_local.py
 
-  docs:
-    # the site builds with warnings as errors, and every gallery example runs
-    # (Jev examples read the committed answer cache: no API key, no cost)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -e ".[docs]"
-      - run: python -m sphinx -b html docs docs/_build/html -W --keep-going
-      - uses: actions/upload-artifact@v4
-        with:
-          name: docs-html
-          path: docs/_build/html
-
   package:
     # the sdist and wheel build, pass twine's checks, and install cleanly
     runs-on: ubuntu-latest

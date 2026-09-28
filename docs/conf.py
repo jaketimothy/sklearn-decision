@@ -52,6 +52,7 @@ sphinx_gallery_conf = {
 
 html_theme = "pydata_sphinx_theme"
 html_title = "sklearn-decision"
+html_baseurl = "https://jaketimothy.github.io/sklearn-decision/"  # canonical links for search engines
 html_theme_options = {
     "github_url": "https://github.com/jaketimothy/sklearn-decision",
     "navbar_end": ["theme-switcher", "navbar-icon-links"],

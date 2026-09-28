@@ -38,6 +38,7 @@ docs = ["sphinx>=7", "pydata-sphinx-theme>=0.15", "myst-parser>=3", "numpydoc>=1
 
 [project.urls]
 Homepage = "https://github.com/jaketimothy/sklearn-decision"
+Documentation = "https://jaketimothy.github.io/sklearn-decision/"
 Issues = "https://github.com/jaketimothy/sklearn-decision/issues"
 Changelog = "https://github.com/jaketimothy/sklearn-decision/blob/main/CHANGELOG.md"
 

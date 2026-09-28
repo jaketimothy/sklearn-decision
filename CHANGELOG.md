@@ -38,6 +38,7 @@ First release.
 - `ChoiceEncoder(self_match="reask")`, the default: exemplar rows are
   re-asked without their own option instead of renormalizing, which
   assumed independence of irrelevant alternatives.
+- Documentation (`docs/`): user guide, API reference and a gallery of examples that run offline from the committed Jev answer cache.
 - A benchmark harness (`benchmarks/`) with behaviour checks and learning
   curves, and results for Jev and Qwen2.5-0.5B on 20 Newsgroups.
 

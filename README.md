@@ -109,6 +109,20 @@ FakeModel()                                                     # offline and de
 - **Caching:** every answer is cached by (model, prompt template, question, row). The default `cache_path=None` keeps answers in memory for the process, shared by clones and grid-search candidates, and writes nothing to disk. Pass `cache_path="answers.sqlite"` to persist them.
 - **New backends** subclass `DecisionModel`, implementing `answer`, `capabilities` and `cache_namespace`. Register them with `register_model("prefix:", factory)`.
 
+## Documentation
+
+The docs cover a user guide, an API reference and runnable examples. They build from `docs/`:
+
+```bash
+pip install -e ".[docs]"
+```
+
+```bash
+python -m sphinx -b html docs docs/_build/html
+```
+
+The examples read Jev's answers from the committed cache, so the build needs no API key and costs nothing. CI builds the site on every pull request and uploads it as an artifact. It isn't hosted anywhere yet.
+
 ## Development
 
 ```bash

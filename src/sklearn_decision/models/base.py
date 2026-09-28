@@ -66,7 +66,8 @@ class DecisionModel(BaseEstimator, ABC):
 
     @abstractmethod
     def capabilities(self) -> Capabilities:
-        ...
+        """What this model can do: option and level limits, questions per
+        request, native confidence, determinism, probability rounding."""
 
     @abstractmethod
     def answer(self, items: Sequence[tuple[Any, Mapping[str, dict]]]) -> list[Response | BaseException]:

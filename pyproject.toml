@@ -34,9 +34,11 @@ dependencies = [
 [project.optional-dependencies]
 local = ["torch>=2.2", "transformers>=4.45"]
 dev = ["pytest>=7", "pandas>=2", "ruff>=0.5"]
+docs = ["sphinx>=7", "pydata-sphinx-theme>=0.15", "myst-parser>=3", "numpydoc>=1.7", "sphinx-gallery>=0.17", "matplotlib>=3.7", "pandas>=2"]
 
 [project.urls]
 Homepage = "https://github.com/jaketimothy/sklearn-decision"
+Documentation = "https://jaketimothy.github.io/sklearn-decision/"
 Issues = "https://github.com/jaketimothy/sklearn-decision/issues"
 Changelog = "https://github.com/jaketimothy/sklearn-decision/blob/main/CHANGELOG.md"
 
@@ -65,3 +67,7 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 ignore = ["B905"]  # zip(strict=) is noise for same-length row/answer pairs
+
+[tool.ruff.lint.per-file-ignores]
+# gallery examples import per section, so each step reads on its own
+"examples/*" = ["E402"]

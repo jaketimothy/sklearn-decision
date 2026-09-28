@@ -44,16 +44,28 @@ def choice_bank(options: Sequence[str] | Mapping[str, str | None], views: str | 
                 max_options: int | None = None) -> dict:
     """Build a choice-only question bank from one codebook and one or more views.
 
-    options : the codebook, a list of labels or {label: description}.
-    views   : one question statement, or {view_name: statement}. Every view
-              asks the same codebook under a different framing, so M views
-              give M simplex embeddings of the same row.
-    anchor  : (label, description) appended to every block, so blocks can be
-              stitched back into one global distribution (``stitch_blocks``).
-    max_options : largest question the model accepts (anchor included);
-              None means no limit, so the codebook stays one block.
+    Parameters
+    ----------
+    options : list of str or dict
+        The codebook: labels, or ``{label: description}``.
+    views : str or dict
+        One question statement, or ``{view name: statement}``. Every view asks
+        the same codebook under a different framing, so M views give M
+        simplex embeddings of the same row.
+    name : str
+        Prefix of the question names.
+    anchor : (label, description) or None
+        Option appended to every block, so the blocks can be stitched back
+        into one distribution (:func:`stitch_blocks`).
+    max_options : int or None
+        Largest question the model accepts, anchor included. None means no
+        limit, so the codebook stays in one question.
 
-    Question names are ``{name}_{view}`` or, when split, ``{name}_{view}_b{j}``.
+    Returns
+    -------
+    dict
+        ``{question name: spec}``. Names are ``{name}_{view}``, or
+        ``{name}_{view}_b{j}`` when the codebook is split into blocks.
     """
     opts = dict(options) if isinstance(options, Mapping) else {str(o): None for o in options}
     if isinstance(views, str):
@@ -78,11 +90,32 @@ def exemplar_options(texts: Sequence, k: int, *, y=None, max_chars: int = 400, l
                      random_state=0):
     """Sample k rows as landmark options ("which reference is this most like?").
 
-    Stratified by ``y`` when every class can be represented. Returns
-    ({label: truncated text}, indices). Non-string rows are serialized as
-    canonical JSON. If you build a bank from these by hand, drop the returned
-    indices from the downstream training set: an exemplar matches itself.
-    :class:`ChoiceEncoder` handles that for you.
+    Parameters
+    ----------
+    texts : sequence
+        Candidate rows. Non-string rows are serialized as canonical JSON.
+    k : int
+        Number of exemplars; all rows if ``k >= len(texts)``.
+    y : array-like or None
+        Labels to stratify by, when every class can be represented.
+    max_chars : int
+        Exemplar text is truncated to this length.
+    label_prefix : str
+        Option labels are ``{label_prefix}{n}``.
+    random_state : int, RandomState or None
+
+    Returns
+    -------
+    options : dict
+        ``{label: truncated text}``.
+    indices : ndarray
+        The sampled rows' positions in ``texts``.
+
+    Notes
+    -----
+    If you build a bank from these by hand, drop ``indices`` from the
+    downstream training set: an exemplar matches itself.
+    :class:`ChoiceEncoder` handles that for you (``self_match``).
     """
     from sklearn.model_selection import train_test_split
 
@@ -122,9 +155,27 @@ def stitch_blocks(X, feature_names: Sequence[str], question_prefix: str, anchor_
     Uses the anchor shared by every block: log p_i - log p_anchor is the same
     within-block log-ratio a single big question would have produced, *if*
     the model's option scores obey independence of irrelevant alternatives.
-    Test that before trusting this. Pass identity-link features.
+    Test that before trusting it; neither Jev nor Qwen2.5-0.5B fully did.
 
-    Returns (log_probs of shape (n, K), option labels).
+    Parameters
+    ----------
+    X : array-like of shape (n_rows, n_features)
+        Identity-link features (probabilities).
+    feature_names : sequence of str
+        Column names, as from ``get_feature_names_out()``.
+    question_prefix : str
+        Blocked questions are those named ``{question_prefix}_b{j}``.
+    anchor_label : str
+        The option every block shares.
+    eps : float
+        Probabilities are clipped to ``[eps, 1]`` before taking logs.
+
+    Returns
+    -------
+    log_probs : ndarray of shape (n_rows, K)
+        Log-probabilities over all K codebook options.
+    labels : list of str
+        The options, in column order.
     """
     X = np.asarray(X, dtype=float)
     names = list(feature_names)
@@ -297,6 +348,17 @@ class ChoiceEncoder(UsageMixin, TransformerMixin, BaseEstimator):
         return self
 
     def transform(self, X) -> np.ndarray:
+        """Each row's distribution over the codebook, per view, on the ``link`` scale.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples,), DataFrame or 2-D array
+
+        Returns
+        -------
+        ndarray of shape (n_samples, n_features_out)
+            Columns as in ``get_feature_names_out()``.
+        """
         check_is_fitted(self, "featurizer_")
         base = self.featurizer_
         states = prepare_states(self, X, reset=False, state_columns=base.state_columns, state_fn=base.state_fn)
@@ -314,6 +376,17 @@ class ChoiceEncoder(UsageMixin, TransformerMixin, BaseEstimator):
         return apply_link(out, self.link, mask, self._simplex_groups_, base.logit_eps_)
 
     def get_feature_names_out(self, input_features=None):
+        """Output column names, ``choice_{view}__{option}``.
+
+        Parameters
+        ----------
+        input_features : None
+            Ignored; checked against the fitted input only.
+
+        Returns
+        -------
+        ndarray of str
+        """
         check_is_fitted(self, "feature_names_out_")
         if input_features is not None and hasattr(self, "n_features_in_") \
                 and len(input_features) != self.n_features_in_:

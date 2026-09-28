@@ -219,3 +219,9 @@ __marimo__/
 
 # benchmark run logs
 benchmarks/results/*.log
+
+# docs build output
+docs/_build/
+docs/generated/
+docs/auto_examples/
+docs/sg_execution_times.rst

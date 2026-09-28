@@ -231,6 +231,19 @@ class QuestionFeaturizer(UsageMixin, TransformerMixin, BaseEstimator):
         return self
 
     def transform(self, X) -> np.ndarray:
+        """Answer every question about every row, from the cache or the model.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples,), DataFrame or 2-D array
+            Rows: strings or JSON-able records (1-D), or tabular rows.
+
+        Returns
+        -------
+        ndarray of shape (n_samples, n_features_out)
+            Columns as in ``get_feature_names_out()``; NaN for failed answers
+            when ``on_error="nan"``.
+        """
         check_is_fitted(self, "feature_names_out_")
         states = prepare_states(self, X, reset=False, state_columns=self.state_columns,
                                 state_fn=self.state_fn)
@@ -238,6 +251,18 @@ class QuestionFeaturizer(UsageMixin, TransformerMixin, BaseEstimator):
         return apply_link(out, self.link, self._prob_mask_, self._simplex_groups_, self.logit_eps_)
 
     def get_feature_names_out(self, input_features=None):
+        """Output column names: ``question`` for noul questions, ``question__option``
+        for choice options and score levels.
+
+        Parameters
+        ----------
+        input_features : None
+            Ignored; checked against the fitted input only.
+
+        Returns
+        -------
+        ndarray of str
+        """
         check_is_fitted(self, "feature_names_out_")
         if input_features is not None and hasattr(self, "n_features_in_"):
             if len(input_features) != self.n_features_in_:

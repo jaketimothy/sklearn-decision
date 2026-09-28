@@ -2,6 +2,8 @@
 
 Making decision models like Jev useful in scikit-learn pipelines.
 
+**Documentation:** https://jaketimothy.github.io/sklearn-decision/
+
 A *decision model* answers typed questions about a piece of text or a record with probabilities:
 
 - **noul**: is this statement true?
@@ -108,6 +110,20 @@ FakeModel()                                                     # offline and de
 - **Jev versions:** the API lists only `jev-latest` and `jev-preview`. Each answer records the concrete version (`jev-1.13.0`), and a feature matrix that mixes versions raises a warning.
 - **Caching:** every answer is cached by (model, prompt template, question, row). The default `cache_path=None` keeps answers in memory for the process, shared by clones and grid-search candidates, and writes nothing to disk. Pass `cache_path="answers.sqlite"` to persist them.
 - **New backends** subclass `DecisionModel`, implementing `answer`, `capabilities` and `cache_namespace`. Register them with `register_model("prefix:", factory)`.
+
+## Documentation
+
+The docs cover a user guide, an API reference and runnable examples. They build from `docs/`:
+
+```bash
+pip install -e ".[docs]"
+```
+
+```bash
+python -m sphinx -b html docs docs/_build/html
+```
+
+The examples read Jev's answers from the committed cache, so the build needs no API key and costs nothing. CI builds the site on every pull request and uploads it as an artifact. Merges to `main` publish it at **https://jaketimothy.github.io/sklearn-decision/**.
 
 ## Development
 

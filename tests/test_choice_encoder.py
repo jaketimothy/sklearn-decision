@@ -87,7 +87,7 @@ def test_max_options_cannot_exceed_model_limit():
         ChoiceEncoder(CONCEPTS, max_options=9, model=FakeModel(max_choice_options=5), featurizer=FEAT).fit(docs(3))
 
 
-def test_exemplar_self_match_renormalized_for_train_and_duplicates():
+def test_exemplar_self_match_renormalized_for_train_and_duplicates():  # default "reask" == this under IIA
     X = docs(20)
     enc = ChoiceEncoder("exemplars", n_exemplars=6, link="identity", random_state=0,
                         model=FakeModel(), featurizer=FEAT)
@@ -124,3 +124,80 @@ def test_exemplar_encoder_in_cross_validation():
                                        featurizer=FEAT), LogisticRegression())
     scores = cross_val_score(pipe, X, y, cv=3)
     assert scores.shape == (3,)
+
+
+class PositionBiased(FakeModel):
+    """Violates IIA: later options get a boost, so dropping an option shifts the rest."""
+
+    def _answer_one(self, spec, state):
+        ans = super()._answer_one(spec, state)
+        if spec["type"] != "choice":
+            return ans
+        import math
+
+        z = [math.log(p) + 0.4 * k for k, p in enumerate(ans.probs)]
+        e = [math.exp(v - max(z)) for v in z]
+        return type(ans)(tuple(v / sum(e) for v in e), ans.confidence)
+
+
+def _encoders(model, **kw):
+    common = dict(n_exemplars=6, link="identity", random_state=0, model=model, featurizer=FEAT, **kw)
+    return {m: ChoiceEncoder("exemplars", self_match=m, **common) for m in ("reask", "renormalize", "keep")}
+
+
+def test_reask_is_the_default_and_equals_renormalize_under_iia():
+    X = docs(20)
+    assert ChoiceEncoder().self_match == "reask"
+    enc = _encoders(FakeModel())
+    Z = {m: e.fit_transform(X) for m, e in enc.items()}
+    np.testing.assert_allclose(Z["reask"], Z["renormalize"], rtol=1e-9, atol=1e-12)
+    others = np.setdiff1d(np.arange(len(X)), enc["reask"].exemplar_indices_)
+    np.testing.assert_array_equal(Z["reask"][others], Z["keep"][others])
+
+
+def test_reask_asks_the_reduced_question_when_iia_fails():
+    X = docs(20)
+    enc = _encoders(PositionBiased())
+    Z = {m: e.fit_transform(X) for m, e in enc.items()}
+    reask = enc["reask"]
+    (qname, spec), = reask.featurizer_.questions.items()
+    labels = list(spec["criteria"])
+    for n, i in enumerate(reask.exemplar_indices_):
+        own = labels[n]
+        reduced = {"type": "choice", "instructions": spec["instructions"],
+                   "criteria": {lb: d for lb, d in spec["criteria"].items() if lb != own}}
+        direct = QuestionFeaturizer({"r": reduced}, model=PositionBiased(), cache_path=None).fit(None)
+        expected = np.insert(direct.transform([X[i]])[0], labels.index(own), 0.0)
+        np.testing.assert_allclose(Z["reask"][i], expected, rtol=1e-9)
+    # without IIA, renormalizing is not the same thing
+    idx = reask.exemplar_indices_
+    assert np.abs(Z["reask"][idx] - Z["renormalize"][idx]).max() > 1e-3
+
+
+def test_reask_costs_one_extra_question_per_exemplar_row_and_view():
+    X = docs(20)
+    enc = ChoiceEncoder("exemplars", {"a": "A?", "b": "B?"}, n_exemplars=5, random_state=0, model=FakeModel(),
+                        featurizer=FEAT).fit(X)
+    enc.transform(X)
+    usage = enc.model_.usage
+    assert usage["answers_fetched"] == len(X) * 2 + 5 * 2
+    calls = usage["calls"]
+    enc.transform(X)  # re-asked answers are cached too
+    assert enc.model_.usage["calls"] == calls
+
+
+def test_reask_only_touches_the_block_holding_the_own_option():
+    X = docs(12)
+    kw = dict(n_exemplars=7, anchor=("none", None), link="identity", random_state=0, featurizer=FEAT)
+    reask = ChoiceEncoder("exemplars", model=PositionBiased(max_choice_options=4), **kw).fit(X)
+    keep = ChoiceEncoder("exemplars", model=PositionBiased(max_choice_options=4), self_match="keep", **kw).fit(X)
+    Zr, Zk = reask.transform(X), keep.transform(X)
+    groups = reask.featurizer_.feature_groups_
+    for n, i in enumerate(reask.exemplar_indices_):
+        own = list(reask.codebook_)[n]
+        for q, cols in groups.items():
+            touched = own in reask.featurizer_.questions[q]["criteria"]
+            same = np.allclose(Zr[i, cols], Zk[i, cols])
+            assert same != touched, (q, own)
+            if touched:
+                np.testing.assert_allclose(Zr[i, cols].sum(), 1.0)

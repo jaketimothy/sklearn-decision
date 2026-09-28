@@ -6,6 +6,11 @@ the label set: these are zero-shot models that plug into sklearn's
 evaluation, calibration (``CalibratedClassifierCV``), thresholding
 (``TunedThresholdClassifierCV``) and stacking tools.
 
+Their probabilities are the model's raw answers, which are often overconfident
+(Jev's zero-shot log-loss was 1.73 at 77% accuracy on 20 Newsgroups).
+Calibrate them on a few labels with :func:`sklearn_decision.calibrate_zero_shot`
+before thresholding or combining them.
+
 The decision model is the ``model`` parameter, exactly as on the featurizer.
 Cache and state settings come from an optional ``featurizer`` template, so
 ``featurizer__cache_path`` is tunable like any nested parameter; the

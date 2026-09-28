@@ -43,11 +43,29 @@ Full tables with all label counts and arms F (TF-IDF + questions) and G (embeddi
 ### What it shows
 
 1. **Jev is a strong zero-shot classifier here.** With no labels it reaches 76.7%, above every supervised baseline trained on 400 labels (embeddings 73.7%, TF-IDF 68.0%). Qwen-0.5B manages 64.7%.
-2. **Recalibrate Jev before trusting its probabilities.** Raw zero-shot log-loss is 1.73 and ECE 0.14: it is confidently wrong on the posts it misses. A logistic regression on the same topic answers (arm H) fixes that: at 400 labels, 78.0% accuracy, log-loss 0.56 and ECE 0.04, and accuracy is already 78% with 16 labels. This matches the design doc's warning that recalibration is likely to matter.
+2. **Recalibrate Jev before trusting its probabilities.** Raw zero-shot log-loss is 1.73 and ECE 0.14: it is confidently wrong on the posts it misses. With a handful of labels, `calibrate_zero_shot` brings it to 0.71 (see [Calibration](#calibration)); a logistic regression on the same topic answers (arm H) does even better with more labels: at 400 labels, 78.0% accuracy, log-loss 0.56 and ECE 0.04, and accuracy is already 78% with 16 labels. This matches the design doc's warning that recalibration is likely to matter.
 3. **With Jev, the question bank works as an encoder.** The 13 yes/no questions (arm I), none of which names the classes, beat MiniLM embeddings at every label count on full posts (69.9% vs 58.1% at 8 labels, 75.3% vs 73.7% at 400), and match or beat them on the 160-token view (tied at 32). That meets the design doc's ship criterion (question features beat embeddings at ≤ 1k labels), which Qwen-0.5B misses: its yes/no features trail embeddings from 16 labels on. Above ~128 labels the Jev margins (1–3 points) are within the draw-to-draw spread.
 4. **When the classes can be named, ask that one question.** The direct topic question (H) beats the full bank (E) from 16 to 256 labels: with few labels, the extra 13 features cost more in variance than they add. The bank earns its keep where classes can't be named in one question, and in combination (E and F catch up by 256–400 labels).
 5. **The first 160 tokens carry the topic.** Full posts change little (zero-shot 76.7% vs 76.3%; E at 400 labels identical at 76.7%), so truncation is a fair, cheap default for this task.
 6. **Cost and speed.** Featurizing 700 posts × 14 questions took 61 s through the Jev API. The two curve runs used 608k input tokens ($0.026 at the $0.042/M list price); the behaviour checks' tokens weren't logged, and at roughly 6,000 requests they add an estimated $0.10–0.15. The same job on Qwen-0.5B took 3.9 h on the laptop CPU.
+
+## Calibration
+
+Zero-shot probabilities, recalibrated on n labelled training posts and scored on the test split ([calibration.py](calibration.py), from cached answers; mean of 5 label draws, 1 at 400).
+
+| Log-loss (accuracy) | Jev, 16 labels | Jev, 64 | Jev, 400 | Qwen, 16 | Qwen, 64 | Qwen, 400 |
+|---|---:|---:|---:|---:|---:|---:|
+| Raw zero-shot | 1.730 (0.767) | | | 1.353 (0.647) | | |
+| `calibrate_zero_shot` (sigmoid on the frozen classifier) | **0.707** (0.787) | **0.644** (0.782) | 0.618 (0.783) | **0.932** (0.658) | 0.849 (0.667) | 0.838 (0.663) |
+| Logistic head on the topic question's log-odds | 0.946 (0.769) | 0.646 (0.769) | **0.596** (0.777) | 1.127 (0.655) | **0.759** (0.693) | **0.669** (0.697) |
+| Temperature scaling (scikit-learn >= 1.8) | 1.063 (0.767) | 1.077 (0.767) | 0.705 (0.767) | 0.981 (0.647) | 0.968 (0.647) | 0.967 (0.647) |
+| Isotonic | 3.433 (0.781) | 1.366 (0.769) | 0.868 (0.797) | 3.752 (0.659) | 1.570 (0.676) | 0.781 (0.693) |
+
+- **With 4 labels per class, sigmoid scaling cuts Jev's log-loss from 1.73 to 0.71** and nudges accuracy up (76.7% to 78.7%). It never refits or re-queries the model. This is `calibrate_zero_shot`'s default.
+- **From about 16 labels per class, a logistic head is as good or better,** and it keeps improving with more labels.
+- **Isotonic calibration is harmful with few labels** (log-loss 3.4 at 16 labels) and only competitive at 400.
+- **Temperature scaling preserves the predicted class** but fits poorly from a handful of labels here.
+- `CalibratedClassifierCV(FrozenEstimator(clf))` still splits the calibration set into `cv` folds (5 by default), so it needs 5 labels per class unless you pass `cv=2`. With a frozen classifier the folds only re-predict, so `cv` changes the label requirement, not the result.
 
 ## Behaviour checks (Phase 1)
 

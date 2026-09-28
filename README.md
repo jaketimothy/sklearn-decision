@@ -46,8 +46,7 @@ clf = make_pipeline(feat, HistGradientBoostingClassifier()).fit(texts, y)
 ### Decision primitives as zero-shot estimators
 
 ```python
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn_decision import ChoiceClassifier, NoulClassifier, ScoreRegressor
+from sklearn_decision import ChoiceClassifier, NoulClassifier, ScoreRegressor, calibrate_zero_shot
 
 MODEL = "hf:google/gemma-4-12b-it"
 router = ChoiceClassifier("Which team should handle this?",
@@ -55,13 +54,29 @@ router = ChoiceClassifier("Which team should handle this?",
 router.fit(texts)                       # records the label set; no model calls
 router.predict_proba(new_texts)
 
-refund = CalibratedClassifierCV(NoulClassifier("The customer asks for money back.", model=MODEL), cv=3)
-refund.fit(texts, y)
 urgency = ScoreRegressor("How urgent is it?", ["can wait", "this week", "today"], level_values=[0, 3, 7],
                          model=MODEL)
 ```
 
-Raw probabilities from any model should be recalibrated on your own labels before you threshold them. `CalibratedClassifierCV` does that in one line.
+### Calibrate before you trust the probabilities
+
+Decision models are often overconfident. On 20 Newsgroups, Jev's zero-shot answers were 77% accurate but had a log-loss of 1.73: confidently wrong on the posts it missed. Calibrate on a few of your own labels before you threshold or combine them:
+
+```python
+refund = NoulClassifier("The customer asks for money back.", model=MODEL)
+refund_cal = calibrate_zero_shot(refund, X_labelled, y_labelled)    # needs 2+ labels per class
+refund_cal.predict_proba(new_texts)
+```
+
+`calibrate_zero_shot` is sigmoid (Platt) scaling on the frozen classifier: it never refits or re-queries the model. Once you have about 16 or more labels per class, a logistic head on the answers' log-odds does better: `make_pipeline(QuestionFeaturizer({...}, link="logit"), LogisticRegression())`.
+
+| Jev log-loss on held-out posts (raw: 1.73) | 16 labels | 64 labels | 400 labels |
+|---|---:|---:|---:|
+| `calibrate_zero_shot` (sigmoid) | **0.71** | **0.64** | 0.62 |
+| Logistic head | 0.95 | 0.65 | **0.60** |
+| Isotonic | 3.43 | 1.37 | 0.87 |
+
+Isotonic calibration made things worse with few labels, so avoid it until you have hundreds. The details are in [benchmarks/RESULTS.md](benchmarks/RESULTS.md#calibration).
 
 ### Choice codebooks → simplex embeddings
 

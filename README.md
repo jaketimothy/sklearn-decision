@@ -46,8 +46,7 @@ clf = make_pipeline(feat, HistGradientBoostingClassifier()).fit(texts, y)
 ### Decision primitives as zero-shot estimators
 
 ```python
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn_decision import ChoiceClassifier, NoulClassifier, ScoreRegressor
+from sklearn_decision import ChoiceClassifier, NoulClassifier, ScoreRegressor, calibrate_zero_shot
 
 MODEL = "hf:google/gemma-4-12b-it"
 router = ChoiceClassifier("Which team should handle this?",
@@ -55,13 +54,29 @@ router = ChoiceClassifier("Which team should handle this?",
 router.fit(texts)                       # records the label set; no model calls
 router.predict_proba(new_texts)
 
-refund = CalibratedClassifierCV(NoulClassifier("The customer asks for money back.", model=MODEL), cv=3)
-refund.fit(texts, y)
 urgency = ScoreRegressor("How urgent is it?", ["can wait", "this week", "today"], level_values=[0, 3, 7],
                          model=MODEL)
 ```
 
-Raw probabilities from any model should be recalibrated on your own labels before you threshold them. `CalibratedClassifierCV` does that in one line.
+### Calibrate before you trust the probabilities
+
+Decision models are often overconfident. On 20 Newsgroups, Jev's zero-shot answers were 77% accurate but had a log-loss of 1.73: confidently wrong on the posts it missed. Calibrate on a few of your own labels before you threshold or combine them:
+
+```python
+refund = NoulClassifier("The customer asks for money back.", model=MODEL)
+refund_cal = calibrate_zero_shot(refund, X_labelled, y_labelled)    # needs 2+ labels per class
+refund_cal.predict_proba(new_texts)
+```
+
+`calibrate_zero_shot` is sigmoid (Platt) scaling on the frozen classifier: it never refits or re-queries the model. Once you have about 16 or more labels per class, a logistic head on the answers' log-odds does better: `make_pipeline(QuestionFeaturizer({...}, link="logit"), LogisticRegression())`.
+
+| Jev log-loss on held-out posts (raw: 1.73) | 16 labels | 64 labels | 400 labels |
+|---|---:|---:|---:|
+| `calibrate_zero_shot` (sigmoid) | **0.71** | **0.64** | 0.62 |
+| Logistic head | 0.95 | 0.65 | **0.60** |
+| Isotonic | 3.43 | 1.37 | 0.87 |
+
+Isotonic calibration made things worse with few labels, so avoid it until you have hundreds. The details are in [benchmarks/RESULTS.md](benchmarks/RESULTS.md#calibration).
 
 ### Choice codebooks → simplex embeddings
 
@@ -87,7 +102,8 @@ JevModel("jev-latest", timeout=60, max_questions_per_call=25, max_cost_usd=5.0)
 FakeModel()                                                     # offline and deterministic, for tests
 ```
 
-- **Local models** read answers from the next-token logits: Yes/No for noul, option letters for choice, level digits for score. Each row's text is encoded once and its key/value cache is shared by all of that row's questions. Pin `revision` to a commit for reproducible features; the resolved commit is recorded with every answer. See the [benchmarks](benchmarks/README.md) for what a small CPU model does and doesn't deliver.
+- **Local models** read answers from the next-token logits: Yes/No for noul, option letters for choice, level digits for score. Choice questions are asked under 4 rotations of their options by default (`n_option_permutations`), which cancels small models' position bias: for Qwen2.5-0.5B it raised zero-shot accuracy from 65% to 72%. Each row's text is encoded once and its key/value cache is shared by all of that row's questions. Pin `revision` to a commit for reproducible features; the resolved commit is recorded with every answer. See the [benchmarks](benchmarks/README.md) for what a small CPU model does and doesn't deliver.
+- **Untrusted text:** a decision model reads the row as evidence, including claims the row makes about itself. On 20 Newsgroups, appending "this text is about space travel" changed Jev's topic answer on 20% of posts, and fencing the text or adding caveats to the question didn't help ([results](benchmarks/RESULTS.md#do-simple-defences-stop-the-injection-no)). Don't act automatically on answers about user-controlled text without another check.
 - **Credentials:** `TYPESAFE_API_KEY` or `JevModel(api_key=...)` can be a 1Password secret reference such as `op://Personal/Typesafe API/password`. It's resolved with the 1Password CLI (`op read`) on the first request and kept only in process memory, never on the estimator. For scripts, `op run -- python ...` resolves it once for the whole run.
 - **Jev versions:** the API lists only `jev-latest` and `jev-preview`. Each answer records the concrete version (`jev-1.13.0`), and a feature matrix that mixes versions raises a warning.
 - **Caching:** every answer is cached by (model, prompt template, question, row). The default `cache_path=None` keeps answers in memory for the process, shared by clones and grid-search candidates, and writes nothing to disk. Pass `cache_path="answers.sqlite"` to persist them.

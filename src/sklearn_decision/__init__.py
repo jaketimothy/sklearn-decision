@@ -14,6 +14,7 @@ timeout=60)``. Nothing is sent anywhere until you choose.
 from ._answers import DecisionModelError, DistAnswer, NoulAnswer, Response
 from ._cache import clear_memory_cache
 from ._secrets import clear_secret_cache
+from .calibration import calibrate_zero_shot
 from .choice import ChoiceEncoder, choice_bank, exemplar_options, stitch_blocks
 from .estimators import ChoiceClassifier, NoulClassifier, ScoreRegressor
 from .featurizer import QuestionFeaturizer
@@ -38,6 +39,7 @@ __all__ = [
     "NoulClassifier",
     "ChoiceClassifier",
     "ScoreRegressor",
+    "calibrate_zero_shot",
     "noul",
     "choice",
     "score",

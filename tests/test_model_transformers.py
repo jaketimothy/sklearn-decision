@@ -150,6 +150,45 @@ def test_fitted_estimator_pickles_without_weights(load_calls):
     np.testing.assert_allclose(pickle.loads(blob).transform(X), Z)
 
 
+def test_option_permutations_make_answers_order_invariant(load_calls):
+    X = tiny_lm.texts(4)
+    abc = choice("Which kind?", {"a": None, "b": None, "c": None})
+    cab = choice("Which kind?", {"c": None, "a": None, "b": None})  # a rotation of the same options
+
+    def probs(model, spec):
+        f = QuestionFeaturizer({"q": spec}, model=model).fit(X)
+        Z = f.transform(X)
+        names = list(f.get_feature_names_out())
+        return Z[:, [names.index(f"q__{o}") for o in "abc"]]
+
+    plain = model(n_option_permutations=1)
+    assert np.abs(probs(plain, abc) - probs(plain, cab)).max() > 1e-4  # the random LM is order-sensitive
+    averaged = model(n_option_permutations=3)
+    np.testing.assert_allclose(probs(averaged, abc), probs(averaged, cab), atol=1e-6)
+    np.testing.assert_allclose(probs(averaged, abc).sum(axis=1), 1, rtol=1e-6)
+
+
+def test_option_permutations_leave_noul_and_score_alone_and_keep_old_cache_keys(load_calls):
+    X = tiny_lm.texts(3)
+    bank = {"yes": BANK["yes"], "size": BANK["size"]}
+    one = QuestionFeaturizer(bank, model=model(n_option_permutations=1), score_repr="probs").fit(X).transform(X)
+    four = QuestionFeaturizer(bank, model=model(n_option_permutations=4), score_repr="probs").fit(X).transform(X)
+    np.testing.assert_allclose(one, four, atol=1e-6)
+    assert model().n_option_permutations == 4
+    assert model(n_option_permutations=1).cache_namespace() != model().cache_namespace()
+    # caches written with n=1 (before the option existed) keep their keys: same digest as then
+    import hashlib
+
+    from sklearn_decision._cache import canon
+
+    m = model(n_option_permutations=1)
+    before = {"v": tm.TEMPLATE_VERSION, "t": m._templates(), "chat": "auto", "chat_kw": None, "prefix": "",
+              "max_state": None}
+    assert m.cache_namespace().endswith(hashlib.sha256(canon(before).encode()).hexdigest()[:16])
+    with pytest.raises(ValueError, match="n_option_permutations"):
+        resolve_model(model(n_option_permutations=0))
+
+
 # ---------------- opt-in: a real model from the Hub ----------------
 
 @pytest.mark.hub

@@ -10,6 +10,8 @@ hosted API) or anything `resolve_model` accepts.
 |---|---|---|
 | `behaviour_checks.py` | Phase 1 | saturation, noise floor, option-order bias, IIA, rewording stability, prompt injection, co-question coupling |
 | `learning_curves.py` | Phase 4 | test accuracy / macro-F1 / log-loss / ECE vs. number of labels for each arm |
+| `calibration.py` | | zero-shot recalibration recipes vs. number of labels, from cached answers |
+| `injection_defenses.py` | | whether fencing the state or caveating the questions reduces prompt injection (it doesn't) |
 | `report.py` | | chart (`learning_curves.png`) and table (`learning_curves.md`) from a results directory |
 | `data.py` | | 20 Newsgroups loader, the question bank, rewordings and injection strings |
 

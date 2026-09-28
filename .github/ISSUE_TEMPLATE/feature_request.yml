@@ -1,0 +1,21 @@
+name: Feature or backend request
+description: A new capability, model backend, or benchmark
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The use case, not just the feature. What does the current API make hard?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What you'd like, and how it would look in scikit-learn terms (estimator, parameter, backend).
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: For a new model backend or a changed default, any measurements you have (data, metric, numbers) help decide it.

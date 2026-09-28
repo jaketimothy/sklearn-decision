@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/jaketimothy/sklearn-decision/security/advisories/new
+    about: Please report security issues privately, not as a public issue.
+  - name: Documentation
+    url: https://jaketimothy.github.io/sklearn-decision/
+    about: The user guide, API reference and examples.

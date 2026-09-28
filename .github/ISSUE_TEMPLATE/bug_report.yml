@@ -1,0 +1,41 @@
+name: Bug report
+description: Something doesn't work as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please don't paste API keys, or private rows your model saw.
+        For security issues, see SECURITY.md instead of opening a public issue.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Ideally with `model=FakeModel()`, so it runs without a key or a download. Say if it only happens with a specific model.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Error or output
+      render: text
+  - type: input
+    id: model
+    attributes:
+      label: Decision model
+      description: e.g. `jev-latest` (and the version from `estimator.usage()["versions"]`), `hf:<repo>@<revision>`, or a custom backend
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions
+      description: Output of `python -c "import sklearn_decision, sklearn, numpy, sys; print(sklearn_decision.__version__, sklearn.__version__, numpy.__version__, sys.version)"`
+      render: text
+    validations:
+      required: true

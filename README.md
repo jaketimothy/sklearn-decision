@@ -128,3 +128,5 @@ pytest -q -m live
 - `-m live` calls the Jev API and needs `TYPESAFE_API_KEY`.
 
 See [docs/design.md](docs/design.md) for the design rationale, the rules for writing questions, and the experiment plan.
+
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). Please report security issues privately, as [SECURITY.md](SECURITY.md) describes.

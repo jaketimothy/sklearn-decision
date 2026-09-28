@@ -26,7 +26,7 @@ from sklearn.utils.metaestimators import available_if
 from sklearn.utils.multiclass import check_classification_targets, type_of_target
 from sklearn.utils.validation import check_array, check_consistent_length, check_is_fitted, column_or_1d
 
-from .featurizer import QuestionFeaturizer, _input_tags
+from .featurizer import QuestionFeaturizer, UsageMixin, _input_tags
 from .models import DecisionModel
 from .models.base import model_capabilities
 from .questions import choice, noul, score
@@ -36,7 +36,7 @@ __all__ = ["NoulClassifier", "ChoiceClassifier", "ScoreRegressor"]
 _QNAME = "q"
 
 
-class _SingleQuestionEstimator(BaseEstimator):
+class _SingleQuestionEstimator(UsageMixin, BaseEstimator):
     """Shared plumbing: build, fit and query a one-question featurizer."""
 
     _question_type: str = ""

@@ -23,6 +23,7 @@ pruning questions only pays for answers it has never seen.
 from __future__ import annotations
 
 import math
+import pickle
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
@@ -70,6 +71,22 @@ def apply_link(out: np.ndarray, link: str, prob_mask: np.ndarray, simplex_groups
     return out
 
 
+class UsageMixin:
+    """Adds ``usage()`` to an estimator whose fitted model is ``model_``."""
+
+    def usage(self) -> dict:
+        """What this fitted estimator has cost so far.
+
+        Returns a dict with ``calls`` (model requests), ``answers_fetched``,
+        ``cache_hits``, ``input_tokens`` and ``output_tokens``, plus
+        ``versions``: the concrete model versions whose answers it served.
+        Counts cover this estimator's model since ``fit``; answers served
+        from the cache cost nothing.
+        """
+        check_is_fitted(self, "model_")
+        return {**self.model_.usage, "versions": sorted(self.model_.versions_seen)}
+
+
 def _input_tags(tags, model) -> Any:
     """Input tags shared by every estimator in the package.
 
@@ -84,7 +101,7 @@ def _input_tags(tags, model) -> Any:
     return tags
 
 
-class QuestionFeaturizer(TransformerMixin, BaseEstimator):
+class QuestionFeaturizer(UsageMixin, TransformerMixin, BaseEstimator):
     """Turn unstructured rows into a numeric matrix of decision-model answers.
 
     Parameters
@@ -260,6 +277,13 @@ class QuestionFeaturizer(TransformerMixin, BaseEstimator):
             raise ValueError(f"logit_eps must be in (0, 0.5), got {self.logit_eps!r}")
         if self.state_fn is not None and not callable(self.state_fn):
             raise TypeError("state_fn must be callable or None")
+        if self.state_fn is not None:
+            try:
+                pickle.dumps(self.state_fn)
+            except Exception:
+                warnings.warn(f"state_fn {self.state_fn!r} can't be pickled (a lambda or a local function?), so "
+                              "this estimator can't be saved with pickle or joblib. Define it at module level.",
+                              UserWarning, stacklevel=3)
 
     def _requests(self, qnames: list[str], model: DecisionModel) -> list[dict]:
         size = model.capabilities().max_questions_per_call or len(qnames)
@@ -286,6 +310,8 @@ class QuestionFeaturizer(TransformerMixin, BaseEstimator):
     def _fetch(self, states: list, row_questions: Sequence[Mapping[str, dict]]) -> list[dict]:
         """Answer ``row_questions[i]`` about ``states[i]`` for every row, from the
         cache or the model. Rows may ask different questions.
+
+        Package-internal: ``ChoiceEncoder`` uses it to re-ask exemplar rows.
 
         Returns one ``{question name: (answer, version)}`` per row; failed
         answers are missing (after applying ``on_error``).

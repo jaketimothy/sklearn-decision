@@ -33,6 +33,8 @@ First release.
 - `TransformersModel(n_option_permutations=4)`: choice questions are asked
   under several rotations of their options and averaged, cancelling
   position bias in small local models.
+- `usage()` on every estimator: model calls, cache hits, tokens and the
+  model versions behind its answers.
 - `ChoiceEncoder(self_match="reask")`, the default: exemplar rows are
   re-asked without their own option instead of renormalizing, which
   assumed independence of irrelevant alternatives.

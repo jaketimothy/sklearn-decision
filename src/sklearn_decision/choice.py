@@ -18,7 +18,7 @@ from sklearn.utils.validation import check_is_fitted
 
 from ._cache import canon
 from ._state import prepare_states
-from .featurizer import SEP, QuestionFeaturizer, _input_tags, apply_link
+from .featurizer import SEP, QuestionFeaturizer, UsageMixin, _input_tags, apply_link
 from .models import DecisionModel, resolve_model
 
 __all__ = ["ChoiceEncoder", "choice_bank", "exemplar_options", "stitch_blocks"]
@@ -148,7 +148,7 @@ def _state_hash(state) -> str:
     return hashlib.sha256(canon(state).encode()).hexdigest()
 
 
-class ChoiceEncoder(TransformerMixin, BaseEstimator):
+class ChoiceEncoder(UsageMixin, TransformerMixin, BaseEstimator):
     """Encode rows as distributions over a codebook of options.
 
     Parameters

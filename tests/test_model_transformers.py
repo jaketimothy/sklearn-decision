@@ -66,13 +66,29 @@ def test_readout_matches_manual_forward_pass(load_calls):
 
     m = model().resolve()
     [res] = m.answer([("w1 w2 w3", {"q": BANK["yes"]})])
-    tok, lm, _ = tm._LOADED[(tiny_lm.NAME, "main", "cpu", "auto", False)]
+    tok, lm, _ = tm._LOADED[(tiny_lm.NAME, "main", "cpu", "float32", False)]
     with torch.no_grad():
         logits = lm(torch.tensor([tok.encode(m._prompt(tok, "w1 w2 w3", BANK["yes"]))])).logits[0, -1]
     ids = dict(zip(["Yes", "yes", "No", "no"], tok.convert_tokens_to_ids(["Yes", "yes", "No", "no"])))
     z_yes = torch.logsumexp(logits[[ids["Yes"], ids["yes"]]], 0)
     z_no = torch.logsumexp(logits[[ids["No"], ids["no"]]], 0)
     assert res.answers["q"].p == pytest.approx(float(torch.sigmoid(z_yes - z_no)), abs=1e-5)
+
+
+@pytest.mark.parametrize("device, dtype, loaded", [
+    ("cpu", "auto", "float32"),        # half precision is emulated on most CPUs
+    ("cpu", "bfloat16", "bfloat16"),   # an explicit choice is respected
+    ("cuda", "auto", "auto"),          # accelerators keep the checkpoint's dtype
+])
+def test_auto_dtype_is_float32_on_cpu(monkeypatch, device, dtype, loaded):
+    seen = []
+    loader = tiny_lm.install()
+    monkeypatch.setattr(tm, "load_pretrained", lambda *a: seen.append(a[3]) or loader(*a))
+    monkeypatch.setattr(tm, "_LOADED", {})
+    m = model(device=device, dtype=dtype).resolve()
+    m._load()
+    assert seen == [loaded]
+    assert f":{dtype}:" in m.cache_namespace()  # the cache key names the setting, not the device
 
 
 def test_prompts_list_options_and_levels(load_calls):

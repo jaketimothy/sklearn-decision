@@ -21,14 +21,50 @@ jobs:
       - run: ruff check src tests benchmarks
       - run: pytest -q
 
+  minimum-versions:
+    # the lower bounds declared in pyproject.toml, on the oldest supported Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install -e ".[dev]" "numpy==1.24.4" "scikit-learn==1.6.0" "httpx==0.25.2" "pandas==2.0.3"
+      - run: pip list | grep -Ei "^(numpy|scikit-learn|httpx|pandas) "
+      - run: pytest -q
+
   local-backend:
     # TransformersModel against a tiny in-memory model: needs torch, downloads no weights
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: latest
+            python-version: "3.12"
+            pins: ""
+          - name: minimum
+            python-version: "3.10"
+            pins: "torch==2.2.2 transformers==4.45.2 numpy==1.26.4"
+    name: local-backend (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install --index-url https://download.pytorch.org/whl/cpu ${{ matrix.pins && 'torch==2.2.2' || 'torch' }}
+      - run: pip install -e ".[dev,local]" ${{ matrix.pins }} --extra-index-url https://download.pytorch.org/whl/cpu
+      - run: pytest -q tests/test_model_transformers.py tests/test_sklearn_checks_local.py
+
+  package:
+    # the sdist and wheel build, pass twine's checks, and install cleanly
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
-      - run: pip install -e ".[dev,local]"
-      - run: pytest -q tests/test_model_transformers.py tests/test_sklearn_checks_local.py
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check --strict dist/*
+      - run: python -m venv /tmp/check && /tmp/check/bin/pip install dist/*.whl && /tmp/check/bin/python -c "import sklearn_decision"

@@ -4,12 +4,27 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sklearn-decision"
-version = "0.1.0.dev0"
-description = "Decision models (Jev and friends) as scikit-learn estimators and featurizers"
+dynamic = ["version"]
+description = "Decision models (Jev and open-weights LLMs) as scikit-learn estimators and featurizers"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Jake Timothy" }]
+keywords = ["scikit-learn", "machine-learning", "llm", "zero-shot", "feature-extraction", "jev"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# Lower bounds are exercised by the "minimum versions" CI job.
 dependencies = [
     "numpy>=1.24",
     "scikit-learn>=1.6",
@@ -20,8 +35,20 @@ dependencies = [
 local = ["torch>=2.2", "transformers>=4.45"]
 dev = ["pytest>=7", "pandas>=2", "ruff>=0.5"]
 
+[project.urls]
+Homepage = "https://github.com/jaketimothy/sklearn-decision"
+Issues = "https://github.com/jaketimothy/sklearn-decision/issues"
+Changelog = "https://github.com/jaketimothy/sklearn-decision/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+path = "src/sklearn_decision/__init__.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/sklearn_decision"]
+
+[tool.hatch.build.targets.sdist]
+# benchmarks/ (answer caches, results) stays in the repo, out of the package
+include = ["src", "tests", "docs", "README.md", "LICENSE", "CHANGELOG.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

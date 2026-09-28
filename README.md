@@ -129,4 +129,4 @@ pytest -q -m live
 
 See [docs/design.md](docs/design.md) for the design rationale, the rules for writing questions, and the experiment plan.
 
-Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). Please report security issues privately, as [SECURITY.md](SECURITY.md) describes.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues privately ([SECURITY.md](SECURITY.md)).

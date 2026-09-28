@@ -26,10 +26,10 @@ The model is a parameter, and you always choose it: TypeSafe's hosted Jev (`"jev
 ## Install
 
 ```bash
-pip install -e ".[local]"
+pip install "sklearn-decision[local] @ git+https://github.com/jaketimothy/sklearn-decision"
 ```
 
-Install from a clone of [the repository](https://github.com/jaketimothy/sklearn-decision); the package isn't on PyPI yet. The `local` extra adds `torch` and `transformers` for open-weights models. For the hosted API only, `pip install -e .` is enough.
+The package isn't on PyPI yet, so this installs from [GitHub](https://github.com/jaketimothy/sklearn-decision). The `local` extra adds `torch` and `transformers` for open-weights models; for the hosted API only, leave out `[local]`.
 
 ## What the benchmarks say
 

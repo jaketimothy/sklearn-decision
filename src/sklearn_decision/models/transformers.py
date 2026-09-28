@@ -113,7 +113,9 @@ class TransformersModel(DecisionModel):
     device : str or None
         "cuda", "mps", "cpu"... None picks the best available.
     dtype : str
-        "auto" (the checkpoint's dtype), "bfloat16", "float16" or "float32".
+        "auto", "bfloat16", "float16" or "float32". "auto" uses the
+        checkpoint's dtype on an accelerator and float32 on the CPU, where
+        half precision is usually emulated and several times slower.
     batch_size : int
         Question prompts per forward pass. Rows run one at a time: each
         row's shared prefix is encoded once, then its questions run in
@@ -268,7 +270,9 @@ class TransformersModel(DecisionModel):
 
     def _load(self):
         device = self.device or _default_device()
-        key = (self.name, self.revision, device, self.dtype, self.trust_remote_code)
+        # most CPUs emulate bfloat16/float16, several times slower than float32
+        dtype = "float32" if self.dtype == "auto" and device == "cpu" else self.dtype
+        key = (self.name, self.revision, device, dtype, self.trust_remote_code)
         with _LOAD_LOCK:
             if key not in _LOADED:
                 tok, model, commit = load_pretrained(*key)

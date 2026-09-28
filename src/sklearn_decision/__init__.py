@@ -31,7 +31,7 @@ from .models import (
 )
 from .questions import choice, load_bank, noul, save_bank, score
 
-__version__ = "0.1.0.dev0"
+__version__ = "0.1.0"
 
 __all__ = [
     "QuestionFeaturizer",

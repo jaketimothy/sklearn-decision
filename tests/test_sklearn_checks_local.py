@@ -10,7 +10,7 @@ from test_sklearn_checks import _expected_failures
 # Seed the weight registry directly: the checks clone estimators many times,
 # and every clone must find the tiny model without going to the Hub.
 _tok, _lm = tiny_lm.build()
-tm._LOADED[(tiny_lm.NAME, "main", "cpu", "auto", False)] = (_tok, _lm, tiny_lm.COMMIT)
+tm._LOADED[(tiny_lm.NAME, "main", "cpu", "float32", False)] = (_tok, _lm, tiny_lm.COMMIT)
 MODEL = TransformersModel(tiny_lm.NAME, device="cpu")
 
 

@@ -1,4 +1,4 @@
-"""Phase 1: model-behaviour checks (docs/design.md), for any decision model.
+"""Model-behaviour checks, for any decision model.
 
 Run these before trusting a model as an encoder:
 

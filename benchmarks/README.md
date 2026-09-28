@@ -1,19 +1,18 @@
 # Benchmarks
 
-**Latest results:** [RESULTS.md](RESULTS.md) (Qwen2.5-0.5B-Instruct on CPU).
+**Latest results:** [RESULTS.md](RESULTS.md) (Jev, and Qwen2.5-0.5B-Instruct on CPU).
 
-Harness for the experiment plan in [docs/design.md](../docs/design.md) §4. Every script takes `--model`:
-a registered name (`hf:<repo id>[@revision]` for a local open-weights model, `jev-latest` for TypeSafe's
-hosted API) or anything `resolve_model` accepts.
+Every script takes `--model`: a registered name (`hf:<repo id>[@revision]` for a local open-weights
+model, `jev-latest` for TypeSafe's hosted API) or anything `resolve_model` accepts.
 
-| Script | Plan phase | What it does |
-|---|---|---|
-| `behaviour_checks.py` | Phase 1 | saturation, noise floor, option-order bias, IIA, rewording stability, prompt injection, co-question coupling |
-| `learning_curves.py` | Phase 4 | test accuracy / macro-F1 / log-loss / ECE vs. number of labels for each arm |
-| `calibration.py` | | zero-shot recalibration recipes vs. number of labels, from cached answers |
-| `injection_defenses.py` | | whether fencing the state or caveating the questions reduces prompt injection (it doesn't) |
-| `report.py` | | chart (`learning_curves.png`) and table (`learning_curves.md`) from a results directory |
-| `data.py` | | 20 Newsgroups loader, the question bank, rewordings and injection strings |
+| Script | What it does |
+|---|---|
+| `behaviour_checks.py` | saturation, noise floor, option-order bias, IIA, rewording stability, prompt injection, co-question coupling |
+| `learning_curves.py` | test accuracy / macro-F1 / log-loss / ECE vs. number of labels for each arm |
+| `calibration.py` | zero-shot recalibration recipes vs. number of labels, from cached answers |
+| `injection_defenses.py` | whether fencing the state or caveating the questions reduces prompt injection (it doesn't) |
+| `report.py` | chart (`learning_curves.png`) and table (`learning_curves.md`) from a results directory |
+| `data.py` | 20 Newsgroups loader, the question bank, rewordings and injection strings |
 
 ```bash
 pip install -e ".[local]" sentence-transformers matplotlib

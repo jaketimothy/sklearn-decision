@@ -1,4 +1,4 @@
-"""Phase 4: learning curves over the number of labels (docs/design.md).
+"""Learning curves over the number of labels, for each arm in benchmarks/README.md.
 
 Every arm is scored on the same held-out test set as the labelled training
 set grows. Question answers are computed once (the featurizer is stateless)

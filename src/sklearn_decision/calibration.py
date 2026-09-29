@@ -9,7 +9,7 @@ Measured recommendation (log-loss on held-out data, benchmarks/calibration.py):
 * **A few labels (≈ 4-15 per class):** :func:`calibrate_zero_shot`, i.e. sigmoid
   (Platt) scaling on the frozen classifier. Jev: 1.73 -> 0.71 with 16 labels.
 * **More labels (≈ 16+ per class):** a logistic head on the answers' log-odds,
-  ``make_pipeline(QuestionFeaturizer({...}, link="logit"), LogisticRegression())``.
+  ``make_pipeline(QuestionFeaturizer({...}, model=...), LogisticRegression())``.
   Jev: 0.60 with 400 labels.
 * Avoid ``method="isotonic"`` with few labels: it made log-loss worse than raw.
 """

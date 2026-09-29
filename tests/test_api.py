@@ -16,16 +16,14 @@ from sklearn_decision import (
     noul,
 )
 
-FEAT = QuestionFeaturizer(cache_path=None)
-
 
 def estimators():
     return [
         QuestionFeaturizer({"a": noul("x"), "b": noul("y")}, model=FakeModel(), cache_path=None),
-        NoulClassifier("x", model=FakeModel(), featurizer=FEAT),
-        ChoiceClassifier("x", dict.fromkeys("abc"), model=FakeModel(), featurizer=FEAT),
-        ScoreRegressor("x", ["lo", "hi"], model=FakeModel(), featurizer=FEAT),
-        ChoiceEncoder(["p", "q", "r"], model=FakeModel(), featurizer=FEAT),
+        NoulClassifier("x", model=FakeModel()),
+        ChoiceClassifier("x", dict.fromkeys("abc"), model=FakeModel()),
+        ScoreRegressor("x", ["lo", "hi"], model=FakeModel()),
+        ChoiceEncoder(["p", "q", "r"], model=FakeModel()),
     ]
 
 
@@ -54,7 +52,7 @@ def test_unpicklable_state_fn_warns_at_fit(texts):
     with pytest.warns(UserWarning, match="can't be pickled"):
         QuestionFeaturizer({"a": noul("x")}, model=FakeModel(), state_fn=lambda t: t.upper()).fit(texts)
     with pytest.warns(UserWarning, match="can't be pickled"):
-        ChoiceEncoder(["p", "q"], model=FakeModel(), featurizer=QuestionFeaturizer(state_fn=lambda t: t)).fit(texts)
+        ChoiceEncoder(["p", "q"], model=FakeModel(), state_fn=lambda t: t).fit(texts)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         f = QuestionFeaturizer({"a": noul("x")}, model=FakeModel(), state_fn=upper).fit(texts)

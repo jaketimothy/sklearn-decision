@@ -144,7 +144,8 @@ def main(argv=None):
     # ---- question features, computed once for every row ----
     t0 = time.time()
     state_fn = TruncateLike(args.truncate_like) if args.truncate_like else None
-    feat = QuestionFeaturizer(BANK_20NG, model=model, cache_path=cache, state_fn=state_fn).fit(X_tr)
+    feat = QuestionFeaturizer(BANK_20NG, model=model, link="identity", cache_path=cache,
+                              state_fn=state_fn).fit(X_tr)
     print("cost estimate:", feat.estimate_cost(X_tr + X_te))
     rows = X_tr + X_te
     chunks = []
@@ -161,7 +162,7 @@ def main(argv=None):
     # ---- arm C: zero-shot, shares the bank's topic answers through the cache ----
     topic = BANK_20NG["topic"]
     zs = ChoiceClassifier(topic["instructions"], topic["criteria"], model=model,
-                          featurizer=QuestionFeaturizer(cache_path=cache, state_fn=state_fn)).fit(X_te)
+                          cache_path=cache, state_fn=state_fn).fit(X_te)
     P_topic = zs.predict_proba(X_te)
     order = [names.index(TOPIC_TO_CLASS[c]) for c in zs.classes_]
     P_zs = np.zeros_like(P_topic)

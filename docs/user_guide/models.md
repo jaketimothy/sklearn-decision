@@ -18,7 +18,7 @@ JevModel("jev-latest", timeout=60, max_questions_per_call=25, max_cost_usd=5.0)
 
 - **Versions.** The API lists only `jev-latest` and `jev-preview`; there is no pinned name. Every answer records the concrete version that produced it (e.g. `jev-1.13.0`). A feature matrix that mixes versions raises a warning; when TypeSafe upgrades, start a fresh `cache_path`.
 - **Credentials.** `api_key=` or `TYPESAFE_API_KEY` holds the key, or a [1Password secret reference](https://developer.1password.com/docs/cli/secret-references/) such as `op://Personal/Typesafe API/password`. A reference is resolved with `op read` on the first request and kept only in process memory, never on the estimator, so it can't leak through a repr or a pickle. Fitting never needs the key. For scripts, `op run -- python script.py` resolves it once for the whole run.
-- **Spending cap.** `max_cost_usd` is checked before each batch against the estimated cost plus the spend so far. If the batch would exceed it, nothing is sent.
+- **Spending cap.** `max_cost_usd` caps Jev spending in the whole process, across every clone a grid search or cross-validation makes. Before each chunk of requests, its estimated cost plus the spend so far is checked against the cap; a chunk that would pass it isn't sent, and answers already fetched stay cached. `JevModel.process_spend_usd()` reads the count and `JevModel.reset_process_spend()` zeroes it. Parallel worker processes (`n_jobs > 1`) each count separately.
 - **Rounding.** Probabilities come back to 2 decimals. The featurizer clips log-odds at half a step, so a reported 0.00 doesn't become an outlier.
 - **Other endpoints.** `base_url` points at any server that speaks the same `/v1/systemone` wire format.
 
@@ -66,4 +66,4 @@ class MyModel(DecisionModel):
 register_model("mine:", lambda name: MyModel())
 ```
 
-`answer` returns answers in one schema: {class}`~sklearn_decision.NoulAnswer` for noul questions, and {class}`~sklearn_decision.DistAnswer` for choice and score questions, with probabilities in the order the question lists its options. Everything else (caching, chunking, links, estimators) works unchanged.
+`answer` returns answers in one schema: {class}`~sklearn_decision.NoulAnswer` for noul questions, and {class}`~sklearn_decision.DistAnswer` for choice and score questions, with probabilities in the order the question lists its options. Everything else (caching, chunking, progress, links, estimators) works unchanged. Optionally, set `chunk_size` (requests per call to `answer`, default 32) and override `cost_usd()` for a priced backend, so progress lines and `usage()` report spend.

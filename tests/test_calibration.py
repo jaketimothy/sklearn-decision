@@ -2,9 +2,7 @@ import numpy as np
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import log_loss
 
-from sklearn_decision import ChoiceClassifier, FakeModel, NoulClassifier, QuestionFeaturizer, calibrate_zero_shot
-
-FEAT = QuestionFeaturizer(cache_path=None)
+from sklearn_decision import ChoiceClassifier, FakeModel, NoulClassifier, calibrate_zero_shot
 
 
 def data(n=40, seed=0):
@@ -16,7 +14,7 @@ def data(n=40, seed=0):
 
 def overconfident_classifier():
     # temperature 0.1: near one-hot answers that know nothing about y
-    return ChoiceClassifier("Which?", dict.fromkeys("abcd"), model=FakeModel(temperature=0.1), featurizer=FEAT)
+    return ChoiceClassifier("Which?", dict.fromkeys("abcd"), model=FakeModel(temperature=0.1))
 
 
 def test_calibration_fixes_overconfidence_without_refitting():
@@ -40,6 +38,6 @@ def test_works_with_two_labels_per_class_and_unfitted_estimators():
 def test_binary_noul_classifier():
     X, _ = data()
     y = np.array([0, 1] * 20)
-    clf = NoulClassifier("Is it positive?", model=FakeModel(temperature=0.1), featurizer=FEAT).fit(X, y)
+    clf = NoulClassifier("Is it positive?", model=FakeModel(temperature=0.1)).fit(X, y)
     cal = calibrate_zero_shot(clf, X, y)
     assert cal.predict_proba(X).shape == (40, 2)

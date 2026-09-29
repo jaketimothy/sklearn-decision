@@ -39,9 +39,10 @@ def wire_answer(spec):
 class Server:
     """Records requests; ``script`` maps call number -> (status, headers)."""
 
-    def __init__(self, script=None):
+    def __init__(self, script=None, tokens=10):
         self.requests = []
         self.script = script or {}
+        self.tokens = tokens
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
@@ -52,7 +53,7 @@ class Server:
         return httpx.Response(200, json={
             "model": "jev-1.13.0",
             "answers": {q: wire_answer(s) for q, s in body["questions"].items()},
-            "usage": {"input_tokens": 10, "output_tokens": 0},
+            "usage": {"input_tokens": self.tokens, "output_tokens": 0},
         })
 
 
@@ -78,7 +79,7 @@ def model(server, **kw):
 
 def feat(server, **kw):
     return QuestionFeaturizer(BANK, model=model(server, **kw.pop("model_kw", {})), cache_path=None,
-                              score_repr="both", include_confidence=True, **kw)
+                              score_repr="both", include_confidence=True, **{"link": "identity", **kw})
 
 
 def test_payload_shape_auth_and_normalization():
@@ -246,10 +247,25 @@ def test_invalid_jev_params():
 def test_live_smoke(tmp_path):
     texts = ["Refund my order please.", "How do I reset my API key?", "Great service!"]
     f = QuestionFeaturizer(BANK, model="jev-latest", cache_path=str(tmp_path / "live.sqlite"),
-                           score_repr="both", include_confidence=True).fit(texts)
+                           score_repr="both", include_confidence=True, link="identity").fit(texts)
     X = f.transform(texts)
     assert X.shape == (3, len(f.get_feature_names_out())) and not np.isnan(X).any()
     np.testing.assert_allclose(X[:, f.feature_groups_["product"][:2]].sum(axis=1), 1, atol=1e-3)
     clf = ChoiceClassifier("Which product is discussed?", {"app": None, "api": None}, model="jev-latest",
-                           featurizer=QuestionFeaturizer(cache_path=str(tmp_path / "live.sqlite"))).fit(texts)
+                           cache_path=str(tmp_path / "live.sqlite")).fit(texts)
     assert set(clf.predict(texts)) <= {"app", "api"}
+
+
+def test_spending_cap_holds_across_clones_in_the_process():
+    srv = Server(tokens=1_000_000)  # each request reports $0.042
+    first = feat(srv, model_kw={"max_cost_usd": 0.04}).fit(["a"])
+    first.transform(["a"])  # estimated at a fraction of a cent, so it's sent
+    assert first.usage()["cost_usd"] == pytest.approx(0.042)
+    assert JevModel.process_spend_usd() == pytest.approx(0.042)
+    second = feat(srv, model_kw={"max_cost_usd": 0.04}).fit(["b"])  # a fresh clone, as CV would make
+    with pytest.raises(DecisionModelError, match="Spending cap"):
+        second.transform(["b"])
+    assert len(srv.requests) == 1
+    JevModel.reset_process_spend()
+    second.transform(["b"])
+    assert len(srv.requests) == 2

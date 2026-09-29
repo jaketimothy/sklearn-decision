@@ -5,6 +5,11 @@ With a concept codebook (a taxonomy of labels) that point is a soft
 classification; with an exemplar codebook (real rows as options, "which
 reference is this most like?") it is a similarity profile against landmarks,
 Nyström-style. Several *views* ask the same codebook under different framings.
+
+Codebooks larger than the model's option limit are split into blocks, one
+question per block. Each block is its own simplex; they aren't stitched into
+one distribution, because that is only valid if the model's choices obey
+independence of irrelevant alternatives, which neither model we tested did.
 """
 from __future__ import annotations
 
@@ -12,16 +17,16 @@ import hashlib
 from collections.abc import Mapping, Sequence
 
 import numpy as np
-from sklearn.base import BaseEstimator, TransformerMixin, clone
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils import check_random_state
 from sklearn.utils.validation import check_is_fitted
 
 from ._cache import canon
 from ._state import prepare_states
-from .featurizer import SEP, QuestionFeaturizer, UsageMixin, _input_tags, apply_link
+from .featurizer import QuestionFeaturizer, UsageMixin, _input_tags, apply_link
 from .models import DecisionModel, resolve_model
 
-__all__ = ["ChoiceEncoder", "choice_bank", "exemplar_options", "stitch_blocks"]
+__all__ = ["ChoiceEncoder", "choice_bank", "exemplar_options"]
 
 _DEFAULT_VIEWS = {
     "concepts": "Which option best describes this?",
@@ -55,8 +60,8 @@ def choice_bank(options: Sequence[str] | Mapping[str, str | None], views: str | 
     name : str
         Prefix of the question names.
     anchor : (label, description) or None
-        Option appended to every block, so the blocks can be stitched back
-        into one distribution (:func:`stitch_blocks`).
+        An extra option appended to every block, typically "none of these",
+        so a row that matches nothing in a block has somewhere to go.
     max_options : int or None
         Largest question the model accepts, anchor included. None means no
         limit, so the codebook stays in one question.
@@ -138,63 +143,6 @@ def exemplar_options(texts: Sequence, k: int, *, y=None, max_chars: int = 400, l
     return opts, chosen
 
 
-def _stitch_log(P: np.ndarray, blocks: Sequence[tuple[Sequence[int], int]], eps: float) -> np.ndarray:
-    """Global log-distribution from blocks of (option columns, anchor column)."""
-    cols = []
-    for opt_cols, anchor_col in blocks:
-        a = np.log(np.clip(P[:, anchor_col], eps, 1))[:, None]
-        cols.append(np.log(np.clip(P[:, list(opt_cols)], eps, 1)) - a)
-    Z = np.concatenate(cols, axis=1)
-    Z = Z - Z.max(axis=1, keepdims=True)
-    return Z - np.log(np.exp(Z).sum(axis=1, keepdims=True))
-
-
-def stitch_blocks(X, feature_names: Sequence[str], question_prefix: str, anchor_label: str, eps: float = 1e-6):
-    """Rebuild one global log-distribution from blocked choice questions.
-
-    Uses the anchor shared by every block: log p_i - log p_anchor is the same
-    within-block log-ratio a single big question would have produced, *if*
-    the model's option scores obey independence of irrelevant alternatives.
-    Test that before trusting it; neither Jev nor Qwen2.5-0.5B fully did.
-
-    Parameters
-    ----------
-    X : array-like of shape (n_rows, n_features)
-        Identity-link features (probabilities).
-    feature_names : sequence of str
-        Column names, as from ``get_feature_names_out()``.
-    question_prefix : str
-        Blocked questions are those named ``{question_prefix}_b{j}``.
-    anchor_label : str
-        The option every block shares.
-    eps : float
-        Probabilities are clipped to ``[eps, 1]`` before taking logs.
-
-    Returns
-    -------
-    log_probs : ndarray of shape (n_rows, K)
-        Log-probabilities over all K codebook options.
-    labels : list of str
-        The options, in column order.
-    """
-    X = np.asarray(X, dtype=float)
-    names = list(feature_names)
-    qnames = sorted({n.split(SEP, 1)[0] for n in names if n.startswith(question_prefix + "_b") and SEP in n})
-    if not qnames:
-        raise ValueError(f"no blocked questions start with {question_prefix!r}_b")
-    blocks, labels = [], []
-    for q in qnames:
-        anchor_col = names.index(f"{q}{SEP}{anchor_label}")
-        opt_cols = []
-        for c, n in enumerate(names):
-            head, _, opt = n.partition(SEP)
-            if head == q and opt not in (anchor_label, "confidence"):
-                opt_cols.append(c)
-                labels.append(opt)
-        blocks.append((opt_cols, anchor_col))
-    return _stitch_log(X, blocks, eps), labels
-
-
 def _state_hash(state) -> str:
     return hashlib.sha256(canon(state).encode()).hexdigest()
 
@@ -208,43 +156,40 @@ class ChoiceEncoder(UsageMixin, TransformerMixin, BaseEstimator):
         The options: labels, {label: description}, or "exemplars" to sample
         ``n_exemplars`` training rows in ``fit`` and use them as options.
     views : str, dict or None
-        One question statement, or {view name: statement}. None uses a
-        generic statement suited to the codebook type.
+        One question statement, or {view name: statement}. Each view asks
+        the same codebook under a different framing and gives its own set of
+        columns. None uses a generic statement suited to the codebook type.
     n_exemplars : int or None
         Exemplar codebook size. None fills one question: the model's option
         limit minus the anchor. Required when the model has no limit.
     anchor : (label, description) or None
-        Extra option added to every block, needed for ``stitch``.
+        An extra option added to every block, typically "none of these", so
+        a row that matches nothing in a block has somewhere to go.
     max_options : int or None
         Block size (anchor included). Defaults to the model's option limit;
         None with no model limit keeps the codebook in one question.
+        Larger codebooks become several questions, one per block, each its
+        own simplex.
     max_exemplar_chars : int
         Exemplar text is truncated to this length in the option description.
-    self_match : {"reask", "renormalize", "keep"}
+    self_match : {"reask", "keep"}
         A row that is itself an exemplar trivially picks its own option. This
-        applies to training rows and to any identical row seen later, so
-        exemplars can stay in the training set.
+        applies to training rows and to any identical row seen later.
 
         - "reask" (default): ask that row the affected question again with
-          its own option removed. Exact; costs one extra question per
-          exemplar row and view.
-        - "renormalize": zero the own option and renormalize the rest of its
-          simplex. Free, but only valid if the model obeys independence of
-          irrelevant alternatives, which neither Jev nor Qwen2.5-0.5B did in
-          our behaviour checks (benchmarks/RESULTS.md).
+          its own option removed, so exemplars can stay in the training set
+          and the encoder is safe inside cross-validation. Costs one extra
+          question per exemplar row and view.
         - "keep": leave answers untouched (for ablations).
     link : {"clr", "logit", "identity"}
-        Output scale; "clr" is the natural geometry for compositions.
-    stitch : bool
-        Output one distribution over the whole codebook per view, rebuilt
-        from the blocks through the anchor (requires ``anchor``; assumes IIA).
+        Output scale; "clr" (centred log-ratio, per block) is the natural
+        geometry for a distribution used as an embedding.
     random_state : int, RandomState or None
         Exemplar sampling.
     model : str or DecisionModel
         The decision model (required), as for :class:`QuestionFeaturizer`.
-    featurizer : QuestionFeaturizer or None
-        Template for cache, state and error settings (``cache_path``,
-        ``state_columns``, ``state_fn``, ``on_error``, ``logit_eps``).
+    cache_path, state_columns, state_fn, on_error, logit_eps, verbose
+        As for :class:`QuestionFeaturizer`.
 
     Attributes
     ----------
@@ -255,21 +200,24 @@ class ChoiceEncoder(UsageMixin, TransformerMixin, BaseEstimator):
         Answers the underlying bank (``featurizer_.questions``).
     model_ : DecisionModel
     feature_names_out_ : list[str]
+        ``choice_{view}__{option}``, or ``choice_{view}_b{j}__{option}``
+        when the codebook is split into blocks.
     feature_groups_ : dict[str, list[int]]
         View -> its output columns.
 
     Warnings
     --------
     Exemplar text is sent to the model as option descriptions, so it is as
-    untrusted as the state itself.
+    untrusted as the rows themselves.
     """
 
     def __init__(self, codebook=None, views: str | Mapping[str, str] | None = None, *,
                  n_exemplars: int | None = None, anchor: tuple[str, str | None] | None = None,
                  max_options: int | None = None, max_exemplar_chars: int = 400,
-                 self_match: str = "reask", link: str = "clr", stitch: bool = False,
-                 random_state=None, model: str | DecisionModel | None = None,
-                 featurizer: QuestionFeaturizer | None = None):
+                 self_match: str = "reask", link: str = "clr", random_state=None,
+                 model: str | DecisionModel | None = None, cache_path: str | None = None,
+                 state_columns: Sequence[str] | None = None, state_fn=None, on_error: str = "raise",
+                 logit_eps: float | None = None, verbose: bool = False):
         self.codebook = codebook
         self.views = views
         self.n_exemplars = n_exemplars
@@ -278,18 +226,19 @@ class ChoiceEncoder(UsageMixin, TransformerMixin, BaseEstimator):
         self.max_exemplar_chars = max_exemplar_chars
         self.self_match = self_match
         self.link = link
-        self.stitch = stitch
         self.random_state = random_state
         self.model = model
-        self.featurizer = featurizer
+        self.cache_path = cache_path
+        self.state_columns = state_columns
+        self.state_fn = state_fn
+        self.on_error = on_error
+        self.logit_eps = logit_eps
+        self.verbose = verbose
 
     def fit(self, X, y=None):
         """Build the codebook (sampling exemplars if asked) and the question
         bank. No model calls."""
         self._validate_params()
-        base = self.featurizer if self.featurizer is not None else QuestionFeaturizer()
-        if not isinstance(base, QuestionFeaturizer):
-            raise TypeError(f"featurizer must be a QuestionFeaturizer or None, got {type(base).__name__}")
         caps = resolve_model(self.model).capabilities()
         limit = self.max_options if self.max_options is not None else caps.max_choice_options
         if self.max_options is not None and caps.max_choice_options is not None \
@@ -299,8 +248,8 @@ class ChoiceEncoder(UsageMixin, TransformerMixin, BaseEstimator):
 
         states = None
         if X is not None:
-            states = prepare_states(self, X, reset=True, state_columns=base.state_columns,
-                                    state_fn=base.state_fn)
+            states = prepare_states(self, X, reset=True, state_columns=self.state_columns,
+                                    state_fn=self.state_fn)
         else:
             self.__dict__.pop("n_features_in_", None)
             self.__dict__.pop("feature_names_in_", None)
@@ -340,11 +289,18 @@ class ChoiceEncoder(UsageMixin, TransformerMixin, BaseEstimator):
         views = self.views if self.views is not None else default_view
         views = {"v0": views} if isinstance(views, str) else dict(views)
         bank = choice_bank(opts, views, name="choice", anchor=self.anchor, max_options=limit)
-        feat = clone(base).set_params(questions=bank, model=self.model, link="identity", drop_redundant=False,
-                                      include_confidence=False, score_repr="probs")
+        feat = QuestionFeaturizer(
+            bank, model=self.model, link="identity", score_repr="probs", cache_path=self.cache_path,
+            state_columns=self.state_columns, state_fn=self.state_fn, on_error=self.on_error,
+            logit_eps=self.logit_eps, verbose=self.verbose)
         self.featurizer_ = feat.fit(None)
         self.model_ = feat.model_
-        self._layout(views, list(opts), limit)
+        n_blocks = len(bank) // len(views)
+        self.feature_names_out_ = list(feat.feature_names_out_)
+        self.feature_groups_ = {
+            v: [c for j in range(n_blocks) for c in feat.feature_groups_[_qname("choice", v, j, n_blocks)]]
+            for v in views}
+        self._simplex_groups_ = list(feat.feature_groups_.values())  # one per question: view x block
         return self
 
     def transform(self, X) -> np.ndarray:
@@ -360,23 +316,17 @@ class ChoiceEncoder(UsageMixin, TransformerMixin, BaseEstimator):
             Columns as in ``get_feature_names_out()``.
         """
         check_is_fitted(self, "featurizer_")
-        base = self.featurizer_
-        states = prepare_states(self, X, reset=False, state_columns=base.state_columns, state_fn=base.state_fn)
-        P = base._answer_matrix(states)
+        feat = self.featurizer_
+        states = prepare_states(self, X, reset=False, state_columns=self.state_columns, state_fn=self.state_fn)
+        P = feat._answer_matrix(states)
         if self.self_match == "reask" and self._exemplar_keys_:
             self._reask_self_matches(P, states)
-        if self.stitch:
-            out = np.exp(np.concatenate([_stitch_log(P, blocks, base.logit_eps_)
-                                         for blocks in self._stitch_plan_], axis=1))
-        else:
-            out = P
-        if self.self_match == "renormalize" and self._exemplar_keys_:
-            self._renormalize_self_matches(out, states)
-        mask = np.ones(out.shape[1], dtype=bool)
-        return apply_link(out, self.link, mask, self._simplex_groups_, base.logit_eps_)
+        mask = np.ones(P.shape[1], dtype=bool)
+        return apply_link(P, self.link, mask, self._simplex_groups_, feat.logit_eps_)
 
     def get_feature_names_out(self, input_features=None):
-        """Output column names, ``choice_{view}__{option}``.
+        """Output column names: ``choice_{view}__{option}``, or
+        ``choice_{view}_b{j}__{option}`` when the codebook is split into blocks.
 
         Parameters
         ----------
@@ -406,55 +356,15 @@ class ChoiceEncoder(UsageMixin, TransformerMixin, BaseEstimator):
                 raise ValueError(f"codebook must be a list, a dict or 'exemplars', got {cb!r}")
         elif cb is None or not isinstance(cb, (Mapping, Sequence, np.ndarray)):
             raise ValueError("codebook must be a list, a dict or 'exemplars'")
-        if self.self_match not in ("reask", "renormalize", "keep"):
-            raise ValueError(f"self_match must be 'reask', 'renormalize' or 'keep', got {self.self_match!r}")
+        if self.self_match not in ("reask", "keep"):
+            raise ValueError(f"self_match must be 'reask' or 'keep', got {self.self_match!r}")
         if self.link not in ("identity", "logit", "clr"):
             raise ValueError(f"link must be 'identity', 'logit' or 'clr', got {self.link!r}")
         if self.anchor is not None and (not isinstance(self.anchor, (tuple, list)) or len(self.anchor) != 2):
             raise ValueError("anchor must be a (label, description) pair or None")
-        if self.stitch and self.anchor is None:
-            raise ValueError("stitch=True needs an anchor option shared by every block")
         if self.n_exemplars is not None and (not isinstance(self.n_exemplars, (int, np.integer))
                                              or self.n_exemplars < 2):
             raise ValueError("n_exemplars must be an int >= 2 or None")
-
-    def _layout(self, views: dict, labels: list[str], limit: int | None) -> None:
-        """Output columns, simplex groups and the self-match lookup."""
-        fgroups = self.featurizer_.feature_groups_
-        fnames = self.featurizer_.feature_names_out_
-        per_block = None if limit is None else limit - (1 if self.anchor is not None else 0)
-        blocks = _block_plan(labels, per_block)
-        names, groups, simplex, self_cols, stitch_plan = [], {}, [], {}, []
-        for v in views:
-            if self.stitch:
-                plan = []
-                for j, blk in enumerate(blocks):
-                    cols = fgroups[_qname("choice", v, j, len(blocks))]
-                    plan.append((cols[: len(blk)], cols[len(blk)]))  # anchor is last
-                stitch_plan.append(plan)
-                start = len(names)
-                vcols = list(range(start, start + len(labels)))
-                names += [f"choice_{v}{SEP}{lb}" for lb in labels]
-                simplex.append(vcols)
-                for lb, c in zip(labels, vcols):
-                    self_cols.setdefault(lb, []).append((c, len(simplex) - 1))
-                groups[v] = vcols
-            else:
-                vcols = []
-                for j, blk in enumerate(blocks):
-                    cols = fgroups[_qname("choice", v, j, len(blocks))]
-                    simplex.append(cols)
-                    for lb, c in zip(blk, cols):
-                        self_cols.setdefault(lb, []).append((c, len(simplex) - 1))
-                    vcols += cols
-                groups[v] = vcols
-        if not self.stitch:
-            names = list(fnames)
-        self.feature_names_out_ = names
-        self.feature_groups_ = groups
-        self._simplex_groups_ = simplex
-        self._self_cols_ = self_cols
-        self._stitch_plan_ = stitch_plan
 
     def _reask_self_matches(self, P: np.ndarray, states: list) -> None:
         """For rows that are exemplars, replace each affected question's answer
@@ -492,19 +402,3 @@ class ChoiceEncoder(UsageMixin, TransformerMixin, BaseEstimator):
                 labels = list(feat.questions[q]["criteria"])
                 for lb, p in zip(spec["criteria"], answers[q][0].probs):
                     P[i, cols[labels.index(lb)]] = p
-
-    def _renormalize_self_matches(self, out: np.ndarray, states: list) -> None:
-        for i, s in enumerate(states):
-            labels = self._exemplar_keys_.get(_state_hash(s))
-            if not labels:
-                continue
-            touched = set()
-            for lb in labels:
-                for col, g in self._self_cols_.get(lb, ()):
-                    out[i, col] = 0.0
-                    touched.add(g)
-            for g in touched:
-                cols = self._simplex_groups_[g]
-                tot = out[i, cols].sum()
-                if tot > 0:
-                    out[i, cols] /= tot

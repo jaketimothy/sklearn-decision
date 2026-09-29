@@ -28,7 +28,7 @@ texts = [
     "The API returns 500 errors since this morning, urgent!",
 ]
 
-feat = QuestionFeaturizer(bank, model=FakeModel()).fit(texts)  # fit makes no model calls
+feat = QuestionFeaturizer(bank, model=FakeModel(), link="identity").fit(texts)  # fit makes no model calls
 print(feat.get_feature_names_out())
 
 # %%
@@ -36,20 +36,22 @@ print(feat.get_feature_names_out())
 # -----------------------
 # The featurizer supports scikit-learn's ``set_output``, so the columns keep
 # their names: one per noul question, one per choice option, and the expected
-# level of a score question.
+# level of a score question. ``link="identity"`` above keeps raw probabilities;
+# the default, ``"logit"``, gives log-odds, the better scale for linear models.
 feat.set_output(transform="pandas")
 feat.transform(texts).round(3)
 
 # %%
 # In a pipeline
 # -------------
-# Features feed any estimator. Answers are cached per (model, question, row),
-# so refitting, cross-validating and grid-searching don't ask again.
+# Features feed any estimator; by default they are log-odds. Answers are cached
+# per (model, question, row), so refitting, cross-validating and grid-searching
+# don't ask again.
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 
 y = [1, 0, 1, 0]
-clf = make_pipeline(QuestionFeaturizer(bank, model=FakeModel(), link="logit"), LogisticRegression()).fit(texts, y)
+clf = make_pipeline(QuestionFeaturizer(bank, model=FakeModel()), LogisticRegression()).fit(texts, y)
 clf.predict(texts)
 
 # %%

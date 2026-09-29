@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import os
 import random
+import threading
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -23,6 +24,11 @@ MAX_CHOICE_OPTIONS = 255  # API limit today; raise it here when TypeSafe does
 MAX_SCORE_LEVELS = 10
 
 _sleep = asyncio.sleep  # indirection so tests can skip backoff waits
+
+# Spend reported by every JevModel in this process, in USD. max_cost_usd checks
+# against it, so the cap holds across the clones a grid search or CV makes.
+_SPEND_LOCK = threading.Lock()
+_PROCESS_SPEND = [0.0]
 
 
 class JevAPIError(DecisionModelError):
@@ -45,7 +51,7 @@ class JevModel(DecisionModel):
         warning. Start a fresh ``cache_path`` when TypeSafe upgrades.
     api_key : str or None
         Falls back to ``TYPESAFE_API_KEY``. Either may be the key itself or a
-        1Password secret reference such as ``"op://Private/Typesafe API/credential"``,
+        1Password secret reference such as ``"op://Personal/Typesafe API/password"``,
         resolved with the 1Password CLI (``op read``) on the first request.
         Prefer a reference or the environment variable: a literal key passed
         here shows up in the estimator's repr and ``get_params()``. The key is
@@ -68,11 +74,16 @@ class JevModel(DecisionModel):
     transport : httpx.AsyncBaseTransport or None
         Custom transport, e.g. ``httpx.MockTransport`` in tests.
     max_cost_usd : float or None
-        Spending cap for this model instance (one per fitted estimator).
-        Before each batch, the estimated cost of the uncached requests is
-        added to the spend so far (from reported input tokens); if the total
-        would exceed the cap, nothing is sent and a fatal
-        :class:`DecisionModelError` is raised.
+        Stop before Jev spending in this process would pass this many
+        dollars. The count covers every ``JevModel`` in the process,
+        including the clones that grid search and cross-validation make, so
+        the cap holds for the whole run. Before each chunk of requests, its
+        estimated cost is added to the spend so far (from reported input
+        tokens); if the total would pass the cap, the chunk isn't sent and a
+        fatal :class:`DecisionModelError` is raised. Answers already fetched
+        stay cached. :meth:`process_spend_usd` reads the count and
+        :meth:`reset_process_spend` zeroes it. Parallel worker processes
+        (``n_jobs > 1``) each keep their own count.
     """
 
     def __init__(self, name: str = "jev-latest", *, api_key: str | None = None, base_url: str | None = None,
@@ -119,16 +130,39 @@ class JevModel(DecisionModel):
             probability_resolution=0.01,  # the API reports probabilities to 2 decimals
         )
 
+    @property
+    def chunk_size(self) -> int:
+        """Requests per chunk: enough to keep ``max_concurrency`` requests in flight."""
+        return 4 * self.max_concurrency
+
+    def cost_usd(self) -> float:
+        """What this instance's requests have cost, from reported input tokens."""
+        return self.usage["input_tokens"] / 1e6 * PRICE_PER_INPUT_MTOK
+
+    @staticmethod
+    def process_spend_usd() -> float:
+        """Jev spending by every ``JevModel`` in this process, in USD."""
+        with _SPEND_LOCK:
+            return _PROCESS_SPEND[0]
+
+    @staticmethod
+    def reset_process_spend() -> None:
+        """Zero the process-wide spend that ``max_cost_usd`` is checked against."""
+        with _SPEND_LOCK:
+            _PROCESS_SPEND[0] = 0.0
+
     def answer(self, items: Sequence[tuple[Any, Mapping[str, dict]]]) -> list[Response | BaseException]:
         if not items:
             return []
         if self.max_cost_usd is not None:
-            spent = self.usage["input_tokens"] / 1e6 * PRICE_PER_INPUT_MTOK
-            batch = sum(_est_tokens(s, q) for s, q in items) / 1e6 * PRICE_PER_INPUT_MTOK
-            if spent + batch > self.max_cost_usd:
+            spent = self.process_spend_usd()
+            chunk = sum(_est_tokens(s, q) for s, q in items) / 1e6 * PRICE_PER_INPUT_MTOK
+            if spent + chunk > self.max_cost_usd:
                 raise DecisionModelError(
-                    f"Spending cap: this batch (~${batch:.4f}) on top of ${spent:.4f} spent would exceed "
-                    f"max_cost_usd={self.max_cost_usd}. Nothing was sent.", fatal=True)
+                    f"Spending cap: the next {len(items)} requests (~${chunk:.4f}) on top of ${spent:.4f} "
+                    f"spent in this process would pass max_cost_usd={self.max_cost_usd}, so they weren't "
+                    "sent. Answers fetched so far are cached. JevModel.reset_process_spend() zeroes the count.",
+                    fatal=True)
         raw = run_coro(self._fetch_all(items))
         out: list[Response | BaseException] = []
         for (_, questions), res in zip(items, raw):
@@ -158,8 +192,11 @@ class JevModel(DecisionModel):
 
     def _parse(self, questions: Mapping[str, dict], res: Mapping) -> Response:
         usage = res.get("usage") or {}
+        tokens = int(usage.get("input_tokens", 0))
         self.usage["calls"] += 1
-        self.usage["input_tokens"] += int(usage.get("input_tokens", 0))
+        self.usage["input_tokens"] += tokens
+        with _SPEND_LOCK:
+            _PROCESS_SPEND[0] += tokens / 1e6 * PRICE_PER_INPUT_MTOK
         self.usage["output_tokens"] += int(usage.get("output_tokens", 0))
         raw = res["answers"]
         answers = {}

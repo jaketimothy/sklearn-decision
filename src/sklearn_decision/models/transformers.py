@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import inspect
 import json
 import math
 import os
@@ -159,8 +160,10 @@ class TransformersModel(DecisionModel):
       to 10 levels (digits); ``ChoiceEncoder`` blocks larger codebooks.
     * The state is encoded once per row and shared by all its questions
       through the key/value cache; each question then costs only its own
-      tokens (the embeddings report's "L_text + M x L_question").
+      tokens.
     """
+
+    chunk_size = 8  # rows run one at a time, so small chunks cost nothing and save often
 
     def __init__(self, name: str = "", *, revision: str = "main", device: str | None = None, dtype: str = "auto",
                  batch_size: int = 8, max_state_tokens: int | None = None, use_chat_template="auto",
@@ -363,31 +366,48 @@ class TransformersModel(DecisionModel):
         device = next(model.parameters()).device
         pad = tok.pad_token_id
         n_pre = len(pre)
+        # only the last position's logits are read: skip the vocabulary-wide
+        # projection everywhere else (a large share of a small model's compute,
+        # and n_tokens x vocab floats of memory for a long prefix)
+        keep = _logits_to_keep_kw(model)
+        last_only = {keep: 1} if keep else {}
         results: list = [None] * len(prompts)
         with torch.inference_mode():
             past = None
             if pre:
-                past = model(input_ids=torch.tensor([pre], device=device), use_cache=True).past_key_values
+                past = model(input_ids=torch.tensor([pre], device=device), use_cache=True,
+                             **last_only).past_key_values
                 self.usage["input_tokens"] += n_pre
             order = sorted(range(len(sufs)), key=lambda k: len(sufs[k]))
             for start in range(0, len(order), self.batch_size):
                 batch = order[start : start + self.batch_size]
                 b, width = len(batch), max(len(sufs[k]) for k in batch)
+                # left-padded, so every suffix ends in the last column; the padding
+                # is masked out, and real tokens keep their true positions
                 ids = torch.full((b, width), pad, dtype=torch.long)
                 mask = torch.zeros((b, n_pre + width), dtype=torch.long)
                 mask[:, :n_pre] = 1
-                for r, k in enumerate(batch):  # right-padded: real tokens never attend to the padding
-                    ids[r, : len(sufs[k])] = torch.tensor(sufs[k], dtype=torch.long)
-                    mask[r, n_pre : n_pre + len(sufs[k])] = 1
-                pos = (n_pre + torch.arange(width)).expand(b, width)
+                pos = torch.full((b, width), n_pre, dtype=torch.long)
+                for r, k in enumerate(batch):
+                    n, off = len(sufs[k]), width - len(sufs[k])
+                    ids[r, off:] = torch.tensor(sufs[k], dtype=torch.long)
+                    mask[r, n_pre + off :] = 1
+                    pos[r, off:] = n_pre + torch.arange(n)
                 kw = {"past_key_values": _repeat_cache(past, b), "use_cache": True} if past is not None else {}
                 out = model(input_ids=ids.to(device), attention_mask=mask.to(device), position_ids=pos.to(device),
-                            **kw)
-                last = out.logits.float().cpu()
+                            **kw, **last_only)
+                last = out.logits[:, -1].float().cpu()
                 for r, k in enumerate(batch):
-                    results[k] = last[r, len(sufs[k]) - 1]
+                    results[k] = last[r]
                 self.usage["input_tokens"] += int(mask[:, n_pre:].sum())
         return results
+
+
+def _logits_to_keep_kw(model) -> str | None:
+    """The forward() argument that limits logits to the last positions, if any
+    (renamed from ``num_logits_to_keep`` in transformers 4.50)."""
+    params = inspect.signature(model.forward).parameters
+    return next((k for k in ("logits_to_keep", "num_logits_to_keep") if k in params), None)
 
 
 def _repeat_cache(past, b: int):

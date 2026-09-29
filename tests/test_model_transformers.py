@@ -41,7 +41,7 @@ def model(**kw):
 
 def test_answers_are_valid_distributions(load_calls):
     X = tiny_lm.texts(5)
-    f = QuestionFeaturizer(BANK, model=model(), score_repr="probs").fit(X)
+    f = QuestionFeaturizer(BANK, model=model(), score_repr="probs", link="identity").fit(X)
     Z = f.transform(X)
     g = f.feature_groups_
     assert np.all((Z[:, g["yes"]] > 0) & (Z[:, g["yes"]] < 1))
@@ -172,7 +172,7 @@ def test_option_permutations_make_answers_order_invariant(load_calls):
     cab = choice("Which kind?", {"c": None, "a": None, "b": None})  # a rotation of the same options
 
     def probs(model, spec):
-        f = QuestionFeaturizer({"q": spec}, model=model).fit(X)
+        f = QuestionFeaturizer({"q": spec}, model=model, link="identity").fit(X)
         Z = f.transform(X)
         names = list(f.get_feature_names_out())
         return Z[:, [names.index(f"q__{o}") for o in "abc"]]
@@ -219,3 +219,8 @@ def test_real_instruct_model_answers_obvious_questions():
     space, t_space, t_cook = (names.index(n) for n in ("space", "topic__space", "topic__cooking"))
     assert Z[0, space] > Z[1, space]
     assert Z[0, t_space] > Z[0, t_cook] and Z[1, t_cook] > Z[1, t_space]
+
+
+def test_forward_computes_only_the_last_positions_logits():
+    _, lm = tiny_lm.build()
+    assert tm._logits_to_keep_kw(lm) in ("logits_to_keep", "num_logits_to_keep")

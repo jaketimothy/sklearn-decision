@@ -20,7 +20,7 @@ class FakeModel(DecisionModel):
     from ``hash(seed, instructions, state, label)``; the distribution is their
     softmax. Because an option's score ignores the other options, the model
     satisfies independence of irrelevant alternatives exactly, which makes it
-    a clean reference for testing blocking and stitching.
+    a clean reference for testing blocking and self-match handling.
 
     Parameters
     ----------

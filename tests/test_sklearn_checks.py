@@ -13,8 +13,6 @@ from sklearn_decision import (
     score,
 )
 
-FEAT = QuestionFeaturizer(cache_path=None)
-
 ESTIMATORS = [
     QuestionFeaturizer(
         {
@@ -29,12 +27,12 @@ ESTIMATORS = [
     ),
     QuestionFeaturizer({"a": noul("Large."), "b": choice("Kind?", ["x", "y"])}, model=FakeModel(),
                        cache_path=None, link="clr"),
-    NoulClassifier("The row is positive.", model=FakeModel(), featurizer=FEAT),
-    ChoiceClassifier("Which class is this?", model=FakeModel(), featurizer=FEAT),
-    ScoreRegressor("How big is it?", ["small", "medium", "large"], model=FakeModel(), featurizer=FEAT),
+    NoulClassifier("The row is positive.", model=FakeModel()),
+    ChoiceClassifier("Which class is this?", model=FakeModel()),
+    ScoreRegressor("How big is it?", ["small", "medium", "large"], model=FakeModel()),
     ChoiceEncoder(["alpha", "beta", "gamma", "delta", "epsilon"], model=FakeModel(max_choice_options=3),
-                  anchor=("none", "No option fits"), stitch=True, featurizer=FEAT),
-    ChoiceEncoder("exemplars", n_exemplars=8, model=FakeModel(), random_state=0, featurizer=FEAT),
+                  anchor=("none", "No option fits")),
+    ChoiceEncoder("exemplars", n_exemplars=8, model=FakeModel(), random_state=0),
 ]
 
 
@@ -47,6 +45,12 @@ def _expected_failures(est):
         # lists, so the model sees different states and gives different answers.
         xfail["check_classifier_data_not_an_array"] = "DataFrame states carry column names"
         xfail["check_regressor_data_not_an_array"] = "DataFrame states carry column names"
+    if isinstance(est, NoulClassifier):
+        # these checks train on labels such as [1, 2] or ["one", "two"]; which one the
+        # statement is true for can't be guessed, so NoulClassifier asks for positive_label
+        why = "labels other than 0/1, -1/1 or booleans need positive_label"
+        for check in ("check_classifiers_classes", "check_estimators_dtypes", "check_fit2d_1feature"):
+            xfail[check] = why
     return xfail
 
 

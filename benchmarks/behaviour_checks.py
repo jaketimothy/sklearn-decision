@@ -6,7 +6,7 @@ Run these before trusting a model as an encoder:
   noise        do identical requests return identical answers?
   order        do choice probabilities move when options are reordered?
   iia          does dropping an option preserve the others' ratios?
-               (gates ChoiceEncoder(stitch=True) and self_match="renormalize")
+               (why ChoiceEncoder re-asks exemplar rows instead of renormalizing)
   rewording    do reworded questions rank rows the same way?
   injection    do instructions hidden in the text move the answers?
   coupling     do answers depend on the other questions in the request?
@@ -38,7 +38,7 @@ TOPIC = BANK_20NG["topic"]
 
 
 def answers(model, bank, X, cache):
-    f = QuestionFeaturizer(bank, model=model, cache_path=cache).fit(X)
+    f = QuestionFeaturizer(bank, model=model, link="identity", cache_path=cache).fit(X)
     return f.transform(X), f
 
 

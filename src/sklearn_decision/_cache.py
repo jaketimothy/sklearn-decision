@@ -61,7 +61,9 @@ class AnswerCache:
 
     def _connect(self) -> sqlite3.Connection:
         if self._conn is None:
-            conn = sqlite3.connect(self.path, check_same_thread=False)
+            # several processes (parallel CV workers) may share one file: wait for
+            # another writer's lock instead of failing with "database is locked"
+            conn = sqlite3.connect(self.path, check_same_thread=False, timeout=60)
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS answers ("
                 "key TEXT PRIMARY KEY, answer TEXT NOT NULL, "

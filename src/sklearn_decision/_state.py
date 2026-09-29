@@ -30,8 +30,10 @@ def _clean(v):
     """JSON has no NaN/inf: map them to null, recursively."""
     if isinstance(v, float) and not math.isfinite(v):
         return None
-    if isinstance(v, list):
+    if isinstance(v, (list, tuple)):
         return [_clean(x) for x in v]
+    if isinstance(v, dict):
+        return {k: _clean(x) for k, x in v.items()}
     return v
 
 

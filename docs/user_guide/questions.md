@@ -26,8 +26,8 @@ These come from TypeSafe's guidance for Jev, and they held up in our benchmarks 
 
 Choose the output scale with `link`:
 
-- **`"identity"`** gives raw probabilities. Tree models don't care about scale.
-- **`"logit"`** gives log-odds, the right scale for linear models. Probabilities are clipped first; see `logit_eps`, which adapts to models that round their answers.
+- **`"logit"`** (default) gives log-odds, the right scale for linear models; tree models are unaffected by it. Probabilities are clipped first; see `logit_eps`, which adapts to models that round their answers.
+- **`"identity"`** gives raw probabilities, easier to read.
 - **`"clr"`** gives the centred log-ratio of each choice or score question: the natural geometry when a question is used as an embedding.
 
 Use `drop_redundant=True` to drop the last column of each simplex, since the columns sum to 1, when an unregularized linear model follows.

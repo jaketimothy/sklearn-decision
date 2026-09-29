@@ -70,7 +70,7 @@ refund_cal = calibrate_zero_shot(refund, X_labelled, y_labelled)    # needs 2+ l
 refund_cal.predict_proba(new_texts)
 ```
 
-`calibrate_zero_shot` is sigmoid (Platt) scaling on the frozen classifier: it never refits or re-queries the model. Once you have about 16 or more labels per class, a logistic head on the answers' log-odds does better: `make_pipeline(QuestionFeaturizer({...}, link="logit"), LogisticRegression())`.
+`calibrate_zero_shot` is sigmoid (Platt) scaling on the frozen classifier: it never refits or re-queries the model. Once you have about 16 or more labels per class, a logistic head on the answers' log-odds does better: `make_pipeline(QuestionFeaturizer({...}, model=MODEL), LogisticRegression())`. The featurizer outputs log-odds by default.
 
 | Jev log-loss on held-out posts (raw: 1.73) | 16 labels | 64 labels | 400 labels |
 |---|---:|---:|---:|

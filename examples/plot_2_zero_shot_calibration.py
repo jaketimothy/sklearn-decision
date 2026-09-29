@@ -38,7 +38,7 @@ print(topic["criteria"])
 # raise instead of calling the API.
 import numpy as np
 
-from sklearn_decision import ChoiceClassifier, JevModel, QuestionFeaturizer
+from sklearn_decision import ChoiceClassifier, JevModel
 
 JEV = JevModel("jev-latest", max_cost_usd=0.0)
 CACHE = str(REPO / "benchmarks" / "cache" / "jev-latest.sqlite")
@@ -47,8 +47,7 @@ to_topic = {"alt.atheism": "atheism", "comp.graphics": "graphics", "talk.religio
 yt_train = np.array([to_topic[names[c]] for c in y_train])
 yt_test = np.array([to_topic[names[c]] for c in y_test])
 
-clf = ChoiceClassifier(topic["instructions"], topic["criteria"], model=JEV,
-                       featurizer=QuestionFeaturizer(cache_path=CACHE)).fit(X_test)
+clf = ChoiceClassifier(topic["instructions"], topic["criteria"], model=JEV, cache_path=CACHE).fit(X_train)
 P_raw = clf.predict_proba(X_test)
 print(f"zero-shot accuracy: {(clf.classes_[P_raw.argmax(1)] == yt_test).mean():.1%}")
 print("model versions:", clf.usage()["versions"])

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import math
 import pickle
+import time
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
@@ -78,13 +79,50 @@ class UsageMixin:
         """What this fitted estimator has cost so far.
 
         Returns a dict with ``calls`` (model requests), ``answers_fetched``,
-        ``cache_hits``, ``input_tokens`` and ``output_tokens``, plus
-        ``versions``: the concrete model versions whose answers it served.
-        Counts cover this estimator's model since ``fit``; answers served
-        from the cache cost nothing.
+        ``cache_hits``, ``input_tokens`` and ``output_tokens``, ``cost_usd``
+        (None for models without a price), and ``versions``: the concrete
+        model versions whose answers it served. Counts cover this
+        estimator's model since ``fit``; answers served from the cache cost
+        nothing.
         """
         check_is_fitted(self, "model_")
-        return {**self.model_.usage, "versions": sorted(self.model_.versions_seen)}
+        return {**self.model_.usage, "cost_usd": self.model_.cost_usd(),
+                "versions": sorted(self.model_.versions_seen)}
+
+
+class _Progress:
+    """One line per chunk of requests: done/total, rate, ETA and spend."""
+
+    def __init__(self, owner: str, total: int, rows: int, model):
+        self.owner, self.total, self.model = owner, total, model
+        self.done = 0
+        self.t0 = time.perf_counter()
+        print(f"[{owner}] {total:,} requests for {rows:,} unique rows", flush=True)
+
+    def update(self, n: int) -> None:
+        self.done += n
+        elapsed = time.perf_counter() - self.t0
+        rate = self.done / elapsed if elapsed > 0 else float("inf")
+        parts = [f"{self.done:,}/{self.total:,} requests", f"{rate:.1f}/s"]
+        if self.done < self.total and rate > 0:
+            parts.append(f"ETA {_duration((self.total - self.done) / rate)}")
+        else:
+            parts.append(f"took {_duration(elapsed)}")
+        cost = self.model.cost_usd()
+        if cost is not None:
+            parts.append(f"${cost:.4f} spent")
+        print(f"[{self.owner}] " + " · ".join(parts), flush=True)
+
+
+def _duration(seconds: float) -> str:
+    seconds = int(round(seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m{seconds:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m"
 
 
 def _input_tags(tags, model) -> Any:
@@ -116,12 +154,13 @@ class QuestionFeaturizer(UsageMixin, TransformerMixin, BaseEstimator):
         ``TransformersModel``, "jev-latest" -> ``JevModel`` (hosted: rows are
         sent to TypeSafe). Pass an instance to configure it; its parameters
         are nested (``model__timeout``).
-    link : {"identity", "logit", "clr"}
-        "logit" maps every probability column to log-odds, which suits linear
-        models. "clr" (centred log-ratio) treats each choice/score question as
-        a point on the simplex: log p minus the mean log p over that
-        question's options. Use it when a choice question is the embedding.
-        Noul columns still get logit. Trees don't care.
+    link : {"logit", "identity", "clr"}
+        "logit" (default) maps every probability column to log-odds, the
+        right scale for linear models; tree models are unaffected by it.
+        "identity" keeps raw probabilities. "clr" (centred log-ratio) treats
+        each choice/score question as a point on the simplex: log p minus the
+        mean log p over that question's options. Use it when a choice
+        question is the embedding. Noul columns still get logit.
     score_repr : {"ev", "probs", "both"}
         Score questions become the expected level (0..L-1), the per-level
         probabilities, or both.
@@ -139,7 +178,10 @@ class QuestionFeaturizer(UsageMixin, TransformerMixin, BaseEstimator):
     cache_path : str or None
         SQLite file for a persistent answer cache. None (default) keeps
         answers in a process-wide in-memory cache, shared by clones and
-        grid-search candidates; nothing is written to disk.
+        grid-search candidates; nothing is written to disk. The in-memory
+        cache is not shared between processes, so parallel workers
+        (``n_jobs > 1``) would each ask the model again: set ``cache_path``,
+        or featurize once and cross-validate only the downstream model.
     on_error : {"raise", "nan"}
         On a failed row, raise (after caching the successes) or emit NaNs.
         HistGradientBoosting handles NaN natively. Fatal errors such as bad
@@ -149,6 +191,9 @@ class QuestionFeaturizer(UsageMixin, TransformerMixin, BaseEstimator):
         (default) uses half the model's ``probability_resolution`` (0.005 for
         Jev, which rounds to 0.01), else 1e-4. Resolved as ``logit_eps_``.
     verbose : bool
+        Print progress while fetching answers: requests done, rate, time
+        remaining and, for priced models, dollars spent. Answers are fetched
+        and cached in chunks, so an interrupted run keeps what it fetched.
 
     Attributes
     ----------
@@ -168,7 +213,7 @@ class QuestionFeaturizer(UsageMixin, TransformerMixin, BaseEstimator):
         questions: Mapping[str, Mapping] | None = None,
         *,
         model: str | DecisionModel | None = None,
-        link: str = "identity",
+        link: str = "logit",
         score_repr: str = "ev",
         drop_redundant: bool = False,
         include_confidence: bool = False,
@@ -368,10 +413,9 @@ class QuestionFeaturizer(UsageMixin, TransformerMixin, BaseEstimator):
             step = size or len(ks)
             tasks += [(first_row[sk], ks[j : j + step]) for j in range(0, len(ks), step)]
 
-        # 3) fetch, cache every success, then deal with failures
+        # 3) fetch in chunks, caching each chunk's successes as it lands, so an
+        #    interrupted run keeps everything answered so far
         if tasks:
-            if self.verbose:
-                print(f"[{type(self).__name__}] {len(tasks)} requests for {len(missing)} unique rows")
             # questions keep their own names; two specs sharing a name in one request get a suffix
             names = []
             for _, ks in tasks:
@@ -383,22 +427,29 @@ class QuestionFeaturizer(UsageMixin, TransformerMixin, BaseEstimator):
                     used.add(name)
                     row.append(name)
                 names.append(row)
-            items = [(states[i], {n: missing[state_keys[i]][k] for n, k in zip(ns_, ks)})
-                     for (i, ks), ns_ in zip(tasks, names)]
-            responses = self.model_.answer(items)
-            failures, new_rows = [], []
-            for (_, ks), ns_, res in zip(tasks, names, responses):
-                if isinstance(res, BaseException):
-                    failures.append(res)
-                    continue
-                for n, k in zip(ns_, ks):
-                    hits[k] = (res.answers[n], res.version)
-                    new_rows.append((k, *hits[k]))
-            self.cache_.put_many(new_rows)
-            if failures:
+            progress = _Progress(type(self).__name__, len(tasks), len(missing), self.model_) if self.verbose else None
+            step = max(1, int(self.model_.chunk_size))
+            failures = []
+            for start in range(0, len(tasks), step):
+                part = list(zip(tasks[start : start + step], names[start : start + step]))
+                items = [(states[i], {n: missing[state_keys[i]][k] for n, k in zip(ns_, ks)})
+                         for (i, ks), ns_ in part]
+                responses = self.model_.answer(items)
+                new_rows = []
+                for ((_, ks), ns_), res in zip(part, responses):
+                    if isinstance(res, BaseException):
+                        failures.append(res)
+                        continue
+                    for n, k in zip(ns_, ks):
+                        hits[k] = (res.answers[n], res.version)
+                        new_rows.append((k, *hits[k]))
+                self.cache_.put_many(new_rows)
                 fatal = [e for e in failures if getattr(e, "fatal", False)]
-                if fatal:
+                if fatal:  # e.g. bad credentials: every later chunk would fail the same way
                     raise fatal[0]
+                if progress:
+                    progress.update(len(part))
+            if failures:
                 if self.on_error == "raise":
                     raise failures[0]
                 warnings.warn(f"{len(failures)} of {len(tasks)} model requests failed; "

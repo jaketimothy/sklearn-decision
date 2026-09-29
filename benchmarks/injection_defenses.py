@@ -70,7 +70,8 @@ def main(argv=None):
     out = {}
     for name, (state_fn, bank_fn) in DEFENSES.items():
         bank = bank_fn(base_bank)
-        feat = QuestionFeaturizer(bank, model=model, cache_path=cache, state_fn=state_fn).fit(rows)
+        feat = QuestionFeaturizer(bank, model=model, link="identity", cache_path=cache,
+                                  state_fn=state_fn).fit(rows)
         noul_cols = [feat.feature_groups_[q][0] for q in nouls]
         topic_cols = feat.feature_groups_["topic"]
         clean = feat.transform(rows)
@@ -82,7 +83,7 @@ def main(argv=None):
 
         control = shift(CONTROL)
         attacks = {s: shift(s) for s in INJECTIONS}
-        topic_feat = QuestionFeaturizer({"topic": bank["topic"]}, model=model, cache_path=cache,
+        topic_feat = QuestionFeaturizer({"topic": bank["topic"]}, model=model, link="identity", cache_path=cache,
                                         state_fn=state_fn).fit(X_te)
         P_te = topic_feat.transform(X_te)
         acc = float((np.array(order)[P_te.argmax(1)] == y_te).mean())

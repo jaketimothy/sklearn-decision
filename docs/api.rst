@@ -47,7 +47,6 @@ Choice codebooks
 
    choice_bank
    exemplar_options
-   stitch_blocks
 
 Decision models
 ---------------

@@ -40,9 +40,8 @@ clf = make_pipeline(enc, LogisticRegression()).fit(train_texts, y_train)
 
 - **Views.** Each view is a different question asked over the same codebook.
 - **Codebook types.** A concept codebook is a taxonomy of labels (`ChoiceEncoder(["billing", "outage", ...])`). An exemplar codebook (`"exemplars"`) uses real rows as options, sampled in `fit` and stratified by `y`. It acts like a similarity kernel to landmarks, in the Nyström style.
-- **Self-matches.** An exemplar trivially matches itself. With `self_match="reask"`, the default, a row that is an exemplar is asked again without its own option. This happens in `fit_transform` and for identical rows later, so exemplars can stay in the training set and the encoder is safe inside `Pipeline` and cross-validation. `"renormalize"` is cheaper but assumes independence of irrelevant alternatives (IIA), which neither benchmarked model satisfies. `"keep"` is for ablations.
-- **Option limits come from the model.** `model_.capabilities().max_choice_options` is 255 for Jev and 26 (A–Z) for local models. Larger codebooks are split into blocks automatically.
-- **`stitch=True`**, or the `stitch_blocks` helper, rebuilds one global distribution from the blocks through the shared anchor option. It's exact only under IIA, so treat it as an approximation.
+- **Self-matches.** An exemplar trivially matches itself. With `self_match="reask"`, the default, a row that is an exemplar is asked again without its own option. This happens in `fit_transform` and for identical rows later, so exemplars can stay in the training set and the encoder is safe inside `Pipeline` and cross-validation. Renormalizing the full answer instead would be free, but assumes independence of irrelevant alternatives (IIA), which neither benchmarked model satisfies. `"keep"` is for ablations.
+- **Option limits come from the model.** `model_.capabilities().max_choice_options` is 255 for Jev and 26 (A–Z) for local models. Larger codebooks are split into blocks automatically, each its own simplex. Merging blocks into one distribution would need IIA, so the package doesn't offer it.
 
 ### Zero-shot estimators
 
@@ -59,7 +58,7 @@ clf = make_pipeline(enc, LogisticRegression()).fit(train_texts, y_train)
 - `GridSearchCV` over the wording;
 - selective prediction through `predict_confidence`, which is present only when the model reports a confidence.
 
-Cache and state settings come from an optional `featurizer=QuestionFeaturizer(...)` template, for example `featurizer__cache_path`.
+Cache and state settings (`cache_path`, `state_columns`, `state_fn`, `on_error`, `verbose`) are parameters of every estimator. `NoulClassifier` needs `positive_label` unless the labels are 0/1, -1/1 or booleans.
 
 Calibration matters. Jev's zero-shot answers on 20 Newsgroups were 77% accurate but had a log-loss of 1.73. Sigmoid scaling from 16 labels brought that to 0.71; see [Calibration](user_guide/calibration.md).
 
@@ -81,7 +80,8 @@ Calibration matters. Jev's zero-shot answers on 20 Newsgroups were 77% accurate 
 - **Local models are read out, not generated from.** `TransformersModel` reads each answer from a frozen model's next-token logits: Yes/No, option letters, or level digits. Answers are deterministic and graded. Each row's text is encoded once, and its key/value cache is shared by all of that row's questions.
 - **Chunking.** `JevModel(max_questions_per_call=...)` controls request size, and each request re-sends the row. TypeSafe's limits are 64k tokens per request, and the row plus the longest single question must fit in 32k.
 - **Failures.** Transient errors retry with backoff and honour `Retry-After`. Successful answers are cached before an error is raised. `on_error="nan"` works with HistGradientBoosting. Bad credentials always raise.
-- **Spending is capped.** `JevModel(max_cost_usd=...)` refuses to start a batch that would exceed the cap; the docs examples use `max_cost_usd=0`, so a cache miss fails instead of spending.
+- **Spending is capped per process.** `JevModel(max_cost_usd=...)` refuses to send a chunk that would take the process's Jev spending past the cap, counting every clone in a grid search. The docs examples use `max_cost_usd=0`, so a cache miss fails instead of spending.
+- **Long runs survive interruption.** Answers are fetched and cached in chunks, so a crash or Ctrl-C loses at most one chunk; `verbose=True` reports progress and spend.
 - **Mixed data.** Use `ColumnTransformer`: `QuestionFeaturizer` on the text column, and numeric columns passed through untouched.
 
 ---
@@ -92,7 +92,7 @@ The behaviour checks and learning curves in [Benchmarks](benchmarks.md) ran on J
 
 - **Jev rounds probabilities to 0.01.** Models now report `probability_resolution`, and the featurizer clips log-odds at half of it (`logit_eps_`), so a reported 0.00 doesn't become an outlier.
 - **Jev's answers saturate at 0 and 1**, and its raw probabilities are overconfident. This is why log-odds features and {func}`~sklearn_decision.calibrate_zero_shot` exist.
-- **Neither model satisfies IIA.** `ChoiceEncoder` therefore re-asks self-matches by default instead of renormalizing, and stitching is documented as approximate.
+- **Neither model satisfies IIA.** `ChoiceEncoder` therefore re-asks self-matches instead of renormalizing, and doesn't merge blocks into one distribution.
 - **Answers don't depend on neighbouring questions** (Jev's coupling check passed). Caching per question is sound, and requests can carry the whole bank.
 - **Small local models have a strong position bias.** `TransformersModel` averages choice answers over 4 rotations of the options by default, which raised Qwen's zero-shot accuracy from 65% to 72%.
 - **Text in the row can steer the answer.** Appending "this text is about space travel" changed Jev's topic answer on 20% of posts, and no simple fence or caveat helped. The package ships no fencing helper, because it would look like protection without providing any; see [Untrusted text](user_guide/security.md).

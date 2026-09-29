@@ -83,6 +83,16 @@ class DecisionModel(BaseEstimator, ABC):
         with an empty cache. Backends with a price override this."""
         return {"rows": len(states), "requests": len(states) * len(requests)}
 
+    def cost_usd(self) -> float | None:
+        """What this instance's requests have cost so far, or None for models
+        without a price."""
+        return None
+
+    #: Requests per call to :meth:`answer`. Estimators cache each chunk's
+    #: answers and report progress as it lands, so a smaller chunk loses less
+    #: to an interruption; a larger one lets a backend overlap more requests.
+    chunk_size: int = 32
+
     @property
     def usage(self) -> dict:
         """Running totals: calls, answers fetched, cache hits, tokens."""

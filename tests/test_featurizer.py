@@ -51,7 +51,7 @@ def test_column_layout(texts, kw, names):
 
 
 def test_identity_values_are_probabilities(texts):
-    f = feat(score_repr="both").fit(texts)
+    f = feat(score_repr="both", link="identity").fit(texts)
     X = f.transform(texts)
     g = f.feature_groups_
     assert np.all((X[:, g["refund"]] > 0) & (X[:, g["refund"]] < 1))
@@ -61,7 +61,7 @@ def test_identity_values_are_probabilities(texts):
 
 
 def test_links(texts):
-    P = feat(score_repr="probs").fit_transform(texts)
+    P = feat(score_repr="probs", link="identity").fit_transform(texts)
     L = feat(score_repr="probs", link="logit").fit_transform(texts)
     np.testing.assert_allclose(L, np.log(P / (1 - P)), rtol=1e-6)
     f = feat(score_repr="probs", link="clr").fit(texts)
@@ -248,3 +248,61 @@ def test_reordered_choice_options_are_a_different_question(texts):
     # FakeModel's option scores don't depend on position, so realigned columns must match
     cols = [list(b.get_feature_names_out()).index(f"q__{o}") for o in "xyz"]
     np.testing.assert_allclose(Pb[:, cols], Pa, rtol=1e-12)
+
+
+def test_answers_are_cached_chunk_by_chunk_so_an_interruption_keeps_them(texts):
+    calls = []
+
+    class Interrupted(FakeModel):
+        chunk_size = 2
+
+        def answer(self, items):
+            calls.append(len(items))
+            if len(calls) == 2:
+                raise KeyboardInterrupt  # e.g. Ctrl-C during the second chunk
+            return super().answer(items)
+
+    bank = {"refund": BANK["refund"]}
+    with pytest.raises(KeyboardInterrupt):
+        QuestionFeaturizer(bank, model=Interrupted()).fit(texts).transform(texts)
+    assert calls == [2, 2]
+    rerun = QuestionFeaturizer(bank, model=FakeModel()).fit(texts)  # same namespace as Interrupted
+    rerun.transform(texts)
+    assert rerun.usage()["cache_hits"] == 2 and rerun.usage()["calls"] == len(texts) - 2
+
+
+def test_verbose_reports_progress_per_chunk(texts, capsys):
+    class Small(FakeModel):
+        chunk_size = 4
+
+    QuestionFeaturizer(BANK, model=Small(), verbose=True).fit(texts).transform(texts)
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert lines[0] == f"[QuestionFeaturizer] {len(texts)} requests for {len(texts)} unique rows"
+    assert "4/6 requests" in lines[1] and "ETA" in lines[1]
+    assert "6/6 requests" in lines[2] and "took" in lines[2]
+    assert "$" not in lines[2]  # FakeModel has no price
+
+
+def test_usage_reports_cost(texts):
+    f = feat().fit(texts)
+    f.transform(texts)
+    assert f.usage()["cost_usd"] is None
+
+
+def test_nan_inside_records_becomes_null(texts):
+    rows = np.array([{"note": "refund please", "amount": float("nan")}, {"note": "hi", "amount": 3.0}],
+                    dtype=object)
+    f = QuestionFeaturizer({"refund": BANK["refund"]}, model=FakeModel()).fit(rows)
+    f.transform(rows)
+    from sklearn_decision._cache import canon
+    from sklearn_decision._state import states_only
+    assert canon(states_only(rows)[0]) == '{"amount":null,"note":"refund please"}'
+
+
+def test_sqlite_cache_is_shared_between_connections(texts, tmp_path):
+    path = str(tmp_path / "answers.sqlite")
+    first = feat(cache_path=path).fit(texts)
+    first.transform(texts)
+    second = feat(cache_path=path).fit(texts)
+    np.testing.assert_array_equal(second.transform(texts), first.transform(texts))
+    assert second.usage()["calls"] == 0

@@ -11,17 +11,16 @@ Their probabilities are the model's raw answers, which are often overconfident
 Calibrate them on a few labels with :func:`sklearn_decision.calibrate_zero_shot`
 before thresholding or combining them.
 
-The decision model is the ``model`` parameter, exactly as on the featurizer.
-Cache and state settings come from an optional ``featurizer`` template, so
-``featurizer__cache_path`` is tunable like any nested parameter; the
-template's own ``model`` is ignored in favour of the estimator's.
+The decision model is the ``model`` parameter, and ``cache_path``,
+``state_columns``, ``state_fn``, ``on_error`` and ``verbose`` work as on
+:class:`~sklearn_decision.QuestionFeaturizer`.
 """
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
 import numpy as np
-from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin, clone
+from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
 from sklearn.utils.metaestimators import available_if
 from sklearn.utils.multiclass import check_classification_targets, type_of_target
 from sklearn.utils.validation import check_array, check_consistent_length, check_is_fitted, column_or_1d
@@ -40,14 +39,12 @@ class _SingleQuestionEstimator(UsageMixin, BaseEstimator):
     """Shared plumbing: build, fit and query a one-question featurizer."""
 
     def _fit_featurizer(self, question: dict, X) -> None:
-        base = self.featurizer if self.featurizer is not None else QuestionFeaturizer()
-        if not isinstance(base, QuestionFeaturizer):
-            raise TypeError(f"featurizer must be a QuestionFeaturizer or None, got {type(base).__name__}")
         caps = model_capabilities(self.model)
         confidence = question["type"] != "noul" and caps is not None and caps.native_confidence
-        feat = clone(base).set_params(
-            questions={_QNAME: question}, model=self.model, link="identity", drop_redundant=False,
-            include_confidence=confidence, score_repr="probs")
+        feat = QuestionFeaturizer(
+            {_QNAME: question}, model=self.model, link="identity", score_repr="probs",
+            include_confidence=confidence, cache_path=self.cache_path, state_columns=self.state_columns,
+            state_fn=self.state_fn, on_error=self.on_error, verbose=self.verbose)
         self.featurizer_ = feat.fit(X)
         self.model_ = feat.model_
         for attr in ("n_features_in_", "feature_names_in_"):
@@ -108,11 +105,14 @@ class NoulClassifier(ClassifierMixin, _SingleQuestionEstimator):
     instructions : str
         A statement that should be true exactly for ``positive_label``.
     positive_label : optional
-        Defaults to the larger of the two labels, sklearn's convention.
+        The label for which ``instructions`` is true. Required unless the
+        labels are 0/1, -1/1 or booleans, where it defaults to 1 (True):
+        with labels such as {"refund", "spam"}, guessing would silently
+        invert the classifier.
     model : str or DecisionModel
         The decision model (required), as for :class:`QuestionFeaturizer`.
-    featurizer : QuestionFeaturizer or None
-        Template for cache and state settings.
+    cache_path, state_columns, state_fn, on_error, verbose
+        As for :class:`QuestionFeaturizer`.
 
     ``predict_proba`` returns [P(negative), P(positive)] in ``classes_`` order.
     Noul answers carry no separate confidence, so there is no
@@ -120,11 +120,17 @@ class NoulClassifier(ClassifierMixin, _SingleQuestionEstimator):
     """
 
     def __init__(self, instructions: str = "", positive_label=None, *,
-                 model: str | DecisionModel | None = None, featurizer: QuestionFeaturizer | None = None):
+                 model: str | DecisionModel | None = None, cache_path: str | None = None,
+                 state_columns: Sequence[str] | None = None, state_fn=None, on_error: str = "raise",
+                 verbose: bool = False):
         self.instructions = instructions
         self.positive_label = positive_label
         self.model = model
-        self.featurizer = featurizer
+        self.cache_path = cache_path
+        self.state_columns = state_columns
+        self.state_fn = state_fn
+        self.on_error = on_error
+        self.verbose = verbose
 
     def fit(self, X, y=None):
         """Record the label set; no model calls. ``y`` may be None, giving
@@ -142,7 +148,14 @@ class NoulClassifier(ClassifierMixin, _SingleQuestionEstimator):
                 raise ValueError(f"Only binary classification is supported. The type of the target is {y_type}.")
             if len(classes) < 2:
                 raise ValueError(f"NoulClassifier needs 2 classes in y, got {len(classes)} class")
-        pos = classes[1] if self.positive_label is None else self.positive_label
+        if self.positive_label is not None:
+            pos = self.positive_label
+        elif set(classes.tolist()) in ({0, 1}, {-1, 1}):
+            pos = classes[1]
+        else:
+            raise ValueError(f"Set positive_label: y's labels are {classes.tolist()}, and nothing says which "
+                             "one the statement is true for. (It defaults to 1 only for 0/1, -1/1 or boolean "
+                             "labels.)")
         if pos not in classes:
             raise ValueError(f"positive_label {pos!r} not in classes {classes.tolist()}")
         self.classes_ = classes
@@ -205,16 +218,22 @@ class ChoiceClassifier(ClassifierMixin, _ConfidenceMixin, _SingleQuestionEstimat
         they are sent to the model as strings.
     model : str or DecisionModel
         The decision model (required), as for :class:`QuestionFeaturizer`.
-    featurizer : QuestionFeaturizer or None
-        Template for cache and state settings.
+    cache_path, state_columns, state_fn, on_error, verbose
+        As for :class:`QuestionFeaturizer`.
     """
 
     def __init__(self, instructions: str = "", criteria: Mapping | None = None, *,
-                 model: str | DecisionModel | None = None, featurizer: QuestionFeaturizer | None = None):
+                 model: str | DecisionModel | None = None, cache_path: str | None = None,
+                 state_columns: Sequence[str] | None = None, state_fn=None, on_error: str = "raise",
+                 verbose: bool = False):
         self.instructions = instructions
         self.criteria = criteria
         self.model = model
-        self.featurizer = featurizer
+        self.cache_path = cache_path
+        self.state_columns = state_columns
+        self.state_fn = state_fn
+        self.on_error = on_error
+        self.verbose = verbose
 
     def fit(self, X, y=None):
         """Record the label set; no model calls."""
@@ -292,8 +311,8 @@ class ScoreRegressor(RegressorMixin, _ConfidenceMixin, _SingleQuestionEstimator)
         Numeric value of each level (default 0..L-1).
     model : str or DecisionModel
         The decision model (required), as for :class:`QuestionFeaturizer`.
-    featurizer : QuestionFeaturizer or None
-        Template for cache and state settings.
+    cache_path, state_columns, state_fn, on_error, verbose
+        As for :class:`QuestionFeaturizer`.
 
     ``predict`` returns the expected value sum_i p_i * level_values[i];
     ``predict_levels_proba`` gives the full distribution over levels.
@@ -301,12 +320,18 @@ class ScoreRegressor(RegressorMixin, _ConfidenceMixin, _SingleQuestionEstimator)
 
     def __init__(self, instructions: str = "", levels: Sequence[str] = (),
                  level_values: Sequence[float] | None = None, *,
-                 model: str | DecisionModel | None = None, featurizer: QuestionFeaturizer | None = None):
+                 model: str | DecisionModel | None = None, cache_path: str | None = None,
+                 state_columns: Sequence[str] | None = None, state_fn=None, on_error: str = "raise",
+                 verbose: bool = False):
         self.instructions = instructions
         self.levels = levels
         self.level_values = level_values
         self.model = model
-        self.featurizer = featurizer
+        self.cache_path = cache_path
+        self.state_columns = state_columns
+        self.state_fn = state_fn
+        self.on_error = on_error
+        self.verbose = verbose
 
     def fit(self, X, y=None):
         """Validate the rubric; no model calls. ``y`` is only checked."""

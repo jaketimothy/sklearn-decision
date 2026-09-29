@@ -54,13 +54,13 @@ def main(argv=None):
     model = make_model(args)
     cache = str(HERE / "cache" / f"{slug(args.model)}.sqlite")
     state_fn = TruncateLike(args.truncate_like) if args.truncate_like else None
-    template = QuestionFeaturizer(cache_path=cache, state_fn=state_fn)
     topic = BANK_20NG["topic"]
     to_label = {names.index(c): t for t, c in TOPIC_TO_CLASS.items()}
     yl_tr = np.array([to_label[c] for c in y_tr])
     yl_te = np.array([to_label[c] for c in y_te])
 
-    clf = ChoiceClassifier(topic["instructions"], topic["criteria"], model=model, featurizer=template).fit(X_te)
+    clf = ChoiceClassifier(topic["instructions"], topic["criteria"], model=model, cache_path=cache,
+                           state_fn=state_fn).fit(X_te)
     labels = list(clf.classes_)
     y_idx = np.array([labels.index(v) for v in yl_te])
     out = {"model": args.model, "tag": args.tag, "raw": scores(y_idx, clf.predict_proba(X_te), len(labels)),

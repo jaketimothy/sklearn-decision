@@ -15,7 +15,7 @@ from ._answers import DecisionModelError, DistAnswer, NoulAnswer, Response
 from ._cache import clear_memory_cache
 from ._secrets import clear_secret_cache
 from .calibration import calibrate_zero_shot
-from .choice import ChoiceEncoder, choice_bank, exemplar_options, stitch_blocks
+from .choice import ChoiceEncoder, choice_bank, exemplar_options
 from .estimators import ChoiceClassifier, NoulClassifier, ScoreRegressor
 from .featurizer import QuestionFeaturizer
 from .inspection import grouped_permutation_importance
@@ -47,7 +47,6 @@ __all__ = [
     "save_bank",
     "choice_bank",
     "exemplar_options",
-    "stitch_blocks",
     "grouped_permutation_importance",
     "DecisionModel",
     "Capabilities",

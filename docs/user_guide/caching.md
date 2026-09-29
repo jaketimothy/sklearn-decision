@@ -5,7 +5,9 @@ Every answer is cached by **(model, question, row)**. Re-running a pipeline, cro
 ## Where answers live
 
 - **`cache_path=None`** (default): a process-wide in-memory cache, shared by clones and grid-search candidates. Nothing is written to disk. {func}`~sklearn_decision.clear_memory_cache` empties it.
-- **`cache_path="answers.sqlite"`**: a SQLite file that survives restarts. Several estimators, and several models, can share one file.
+- **`cache_path="answers.sqlite"`**: a SQLite file that survives restarts. Several estimators, several models, and several processes can share one file.
+
+Every estimator takes `cache_path`, as well as `state_columns`, `state_fn`, `on_error` and `verbose`.
 
 A cache key covers everything that changes an answer:
 - the model's `cache_namespace()`: its name, and for local models the revision, dtype and prompt templates;
@@ -25,9 +27,22 @@ feat.estimate_cost(X)     # before: rows, requests, estimated tokens and USD (Je
 feat.usage()              # after: calls, answers fetched, cache hits, tokens, model versions
 ```
 
-For Jev, `JevModel(max_cost_usd=...)` is a hard cap, checked before each batch.
+For Jev, `JevModel(max_cost_usd=...)` caps spending across the whole process, including every clone that grid search and cross-validation make. See [Choosing a model](models.md).
 
 Identical rows are asked only once per `transform`. Each request re-sends the row, so fewer, larger requests are cheaper; `JevModel(max_questions_per_call=...)` sets the request size.
+
+## Long runs
+
+Answers are fetched in chunks, and each chunk is cached as soon as it lands. An interrupted run (Ctrl-C, a crash, a closed laptop) keeps everything fetched so far, and rerunning it asks only for the rest. `verbose=True` prints a line per chunk: requests done, rate, time remaining, and dollars spent for Jev.
+
+The in-memory cache belongs to one process. Parallel workers (`n_jobs > 1` in `cross_val_score` or `GridSearchCV`) would each ask the model again, and each load a local model's weights. Either set `cache_path`, or featurize once and cross-validate only the downstream model:
+
+```python
+Z = feat.fit_transform(X)                                     # one pass over the model
+cross_val_score(LogisticRegression(), Z, y, n_jobs=-1)        # parallel, no model calls
+```
+
+This is safe because the featurizer learns nothing from the rows or labels in `fit`.
 
 ## Failures
 
